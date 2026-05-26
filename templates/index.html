@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Joshua Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ TOPBAR -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo">
+      <span class="logo-mark">▲</span>
+      <span class="logo-text">JOSHUA <span style="opacity:0.5;font-weight:400">TERMINAL</span></span>
+    </div>
+    <div class="connection-status">
+      <span class="dot dot-hl" id="dot-hl" title="Hyperliquid"></span>
+      <span class="conn-label">HL</span>
+      <span class="dot dot-yf" id="dot-yf" title="YFinance"></span>
+      <span class="conn-label">YF</span>
+      <span class="dot dot-oanda" id="dot-oanda" title="OANDA"></span>
+      <span class="conn-label">OANDA</span>
+    </div>
+    <div class="market-time" id="market-time"></div>
+  </div>
+
+  <div class="topbar-center">
+    <span class="charts-label">CHARTS</span>
+    <div class="chart-count-selector" id="chart-count-selector">
+      <button class="count-btn" data-count="1">1</button>
+      <button class="count-btn" data-count="2">2</button>
+      <button class="count-btn active" data-count="4">4</button>
+      <button class="count-btn" data-count="6">6</button>
+      <button class="count-btn" data-count="8">8</button>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <button class="btn-icon" id="btn-new-window" title="Open full terminal on second monitor">⧉</button>
+    <button class="btn-icon" id="btn-theme" title="Toggle theme">☾</button>
+    <button class="btn-icon" id="btn-saved-states" title="Manage Saved States">💾</button>
+    <button class="btn-icon" id="btn-fullscreen" title="Fullscreen">⛶</button>
+    <div class="session-indicator">
+      <span class="session-dot" id="session-dot"></span>
+      <span id="session-text">—</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════ CHART GRID -->
+<main class="chart-grid" id="chart-grid">
+  <!-- Panes injected by JS -->
+</main>
+
+<!-- ═══════════════════════════════════════════ INDICATOR PANEL (shared flyout) -->
+<div class="indicator-flyout" id="indicator-flyout">
+  <div class="flyout-header">
+    <span class="flyout-title">INDICATORS</span>
+    <button class="flyout-close" id="flyout-close">✕</button>
+  </div>
+  <div class="flyout-body" id="flyout-body">
+    <!-- populated by JS based on active pane -->
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ DRAWING TOOLS PANEL (shared flyout) -->
+<div class="drawing-flyout" id="drawing-flyout">
+  <div class="flyout-header">
+    <span class="flyout-title">DRAWING TOOLS</span>
+    <button class="flyout-close" id="draw-flyout-close">✕</button>
+  </div>
+  <div class="flyout-body" id="draw-flyout-body">
+    <!-- populated by JS based on active pane -->
+  </div>
+</div>
+
+<div class="flyout-backdrop" id="flyout-backdrop"></div>
+
+<!-- ═══════════════════════════════════════════ NOTES PANEL -->
+<div class="notes-panel" id="notes-panel">
+  <div class="flyout-header">
+    <span class="flyout-title">📝 NOTES — <span id="notes-symbol">—</span></span>
+    <button class="flyout-close" id="notes-close">✕</button>
+  </div>
+  <div class="notes-list" id="notes-list">
+    <!-- populated by JS -->
+  </div>
+  <div class="notes-composer">
+    <div class="notes-tag-row">
+      <button class="notes-tag active" data-tag="idea">💡 Idea</button>
+      <button class="notes-tag" data-tag="trade">📈 Trade</button>
+      <button class="notes-tag" data-tag="risk">⚠️ Risk</button>
+      <button class="notes-tag" data-tag="misc">📌 Misc</button>
+    </div>
+    <textarea class="notes-textarea" id="notes-textarea" placeholder="Write a note for this symbol..." rows="4"></textarea>
+    <button class="notes-add-btn" id="notes-add-btn">ADD NOTE</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ SAVED STATES PANEL -->
+<div class="saved-states-panel" id="saved-states-panel">
+  <div class="flyout-header">
+    <span class="flyout-title">💾 SAVED STATES</span>
+    <button class="flyout-close" id="saved-states-close">✕</button>
+  </div>
+  <div class="flyout-body" id="saved-states-list">
+    <!-- populated by JS -->
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ SCRIPTS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/static/js/indicators.js"></script>
+<script src="/static/js/state_store.js"></script>
+<script src="/static/js/alert_engine.js"></script>
+<script src="/static/js/pane.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

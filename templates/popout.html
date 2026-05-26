@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{ symbol }} · Joshua Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/css/style.css" />
+<style>
+  /* Popout-specific overrides */
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+  .popout-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* Slim topbar */
+  .popout-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 10px;
+  }
+  .popout-bar .logo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+  .popout-bar .logo-mark { color: var(--accent); font-size: 10px; }
+
+  .popout-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .popout-select {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .popout-symbol {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    width: 100px;
+  }
+  .popout-btn {
+    background: none;
+    border: none;
+    color: var(--text2);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    transition: color 0.15s;
+  }
+  .popout-btn:hover { color: var(--accent); }
+
+  /* Chart fills remaining space */
+  .popout-chart-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+  .popout-chart-wrap .pane {
+    position: absolute;
+    inset: 0;
+    border: none;
+    border-radius: 0;
+  }
+  .popout-chart-wrap .pane-toolbar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+<div class="popout-wrap">
+
+  <!-- Slim bar -->
+  <div class="popout-bar">
+    <div class="logo">
+      <span class="logo-mark">▲</span>
+      <span>JOSHUA <span style="opacity:0.5;font-weight:400">TERMINAL</span></span>
+    </div>
+    <div class="popout-controls">
+      <div class="connection-status" style="gap:5px">
+        <span class="dot" id="pop-dot-hl" title="Hyperliquid"></span>
+        <span class="conn-label">HL</span>
+        <span class="dot" id="pop-dot-yf" title="YFinance"></span>
+        <span class="conn-label">YF</span>
+        <span class="dot" id="pop-dot-oanda" title="OANDA"></span>
+        <span class="conn-label">OANDA</span>
+      </div>
+      <span id="pop-clock" style="font-family:var(--font-mono);font-size:10px;color:var(--text3)"></span>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="popout-btn" id="pop-theme" title="Toggle theme">☾</button>
+      <button class="popout-btn" id="pop-fullscreen" title="Fullscreen">⛶</button>
+    </div>
+  </div>
+
+  <!-- Chart area — pane injected here -->
+  <div class="popout-chart-wrap" id="popout-chart-wrap"></div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/static/js/indicators.js"></script>
+<script src="/static/js/state_store.js"></script>
+<script src="/static/js/alert_engine.js"></script>
+<script src="/static/js/pane.js"></script>
+<script>
+(function () {
+  // ── Read URL params ─────────────────────────────────────────────────────────
+  const params   = new URLSearchParams(location.search);
+  const symbol   = params.get('symbol')   || 'EUR/USD';
+  const interval = params.get('interval') || '15m';
+  const source   = params.get('source')   || 'oanda';
+
+  document.title = `${symbol} · Joshua Terminal`;
+
+  // ── Theme ───────────────────────────────────────────────────────────────────
+  const themeBtn = document.getElementById('pop-theme');
+  const applyTheme = (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    themeBtn.textContent = theme === 'light' ? '☾' : '☀';
+    localStorage.setItem('theme', theme);
+    if (window._popPane) {
+      const isDark = theme === 'dark';
+      window._popPane.applyTheme(
+        isDark ? '#0a0c0f' : '#f0f2f5',
+        isDark ? '#7a8599' : '#4a5568',
+        isDark ? '#454f63' : '#8896a8'
+      );
+    }
+  };
+  themeBtn.addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+    applyTheme(cur === 'dark' ? 'light' : 'dark');
+  });
+  applyTheme(localStorage.getItem('theme') || 'dark');
+
+  // ── Fullscreen ──────────────────────────────────────────────────────────────
+  document.getElementById('pop-fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  });
+
+  // ── Clock ───────────────────────────────────────────────────────────────────
+  const clockEl = document.getElementById('pop-clock');
+  function updateClock() {
+    const now = new Date();
+    const utc = now.toUTCString().slice(17, 22);
+    clockEl.textContent = `UTC ${utc}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── Socket ──────────────────────────────────────────────────────────────────
+  const socket = io();
+
+  function setDot(id, cls) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'dot' + (cls ? ' ' + cls : '');
+  }
+
+  socket.on('connect', () => {
+    setDot('pop-dot-hl', 'live');
+    setDot('pop-dot-yf', 'live');
+  });
+  socket.on('disconnect', () => {
+    setDot('pop-dot-hl', '');
+    setDot('pop-dot-yf', '');
+    setDot('pop-dot-oanda', '');
+  });
+  socket.on('oanda_price', () => setDot('pop-dot-oanda', 'live'));
+
+  // ── Symbol lists (needed by ChartPane) ─────────────────────────────────────
+  const symbolLists = { forex: [], crypto: [] };
+  fetch('/api/symbols/forex').then(r => r.json()).then(d => { symbolLists.forex = d; }).catch(() => {});
+  fetch('/api/symbols/hyperliquid').then(r => r.json()).then(d => { symbolLists.crypto = d; }).catch(() => {});
+
+  // ── Mount pane ──────────────────────────────────────────────────────────────
+  const wrap = document.getElementById('popout-chart-wrap');
+  const paneEl = document.createElement('div');
+  paneEl.className = 'pane';
+  wrap.appendChild(paneEl);
+
+  const pane = new ChartPane(0, paneEl, socket, symbolLists, { source, symbol, interval });
+  window._popPane = pane;
+
+  // Re-apply theme to chart after pane initialises
+  setTimeout(() => {
+    const theme = localStorage.getItem('theme') || 'dark';
+    applyTheme(theme);
+  }, 300);
+
+  // ── Alert permission ────────────────────────────────────────────────────────
+  if (window.AlertEngine) AlertEngine.requestPermission();
+
+})();
+</script>
+</body>
+</html>
