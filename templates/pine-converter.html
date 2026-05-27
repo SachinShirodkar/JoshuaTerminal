@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pine → Joshua Terminal Converter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+  <style>
+    /* ── CSS Variables (mirrors Joshua Terminal style.css) ── */
+    :root {
+      --bg:        #0a0c0f;
+      --bg2:       #0f1217;
+      --bg3:       #141820;
+      --bg4:       #1a2030;
+      --border:    #1e2535;
+      --border2:   #252d3d;
+      --text:      #d4dbe8;
+      --text2:     #7a8599;
+      --text3:     #454f63;
+      --accent:    #00c8ff;
+      --accent2:   #0088cc;
+      --green:     #00e676;
+      --red:       #ff3d5a;
+      --green-dim: rgba(0,230,118,0.10);
+      --red-dim:   rgba(255,61,90,0.10);
+      --gold:      #f0a500;
+      --radius:    4px;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-head: 'Syne', sans-serif;
+    }
+    [data-theme="light"] {
+      --bg:        #f0f2f5;
+      --bg2:       #e4e8ee;
+      --bg3:       #d8dde6;
+      --bg4:       #ccd3de;
+      --border:    #bcc4d0;
+      --border2:   #adb6c4;
+      --text:      #1a2030;
+      --text2:     #4a5568;
+      --text3:     #8896a8;
+      --accent:    #0077bb;
+      --accent2:   #005588;
+      --green:     #00a854;
+      --red:       #e0263e;
+      --green-dim: rgba(0,168,84,0.10);
+      --red-dim:   rgba(224,38,62,0.10);
+      --gold:      #c47d00;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      height: 48px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-logo {
+      font-family: var(--font-head);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .topbar-logo span { color: var(--accent); }
+    .topbar-sep {
+      width: 1px; height: 20px;
+      background: var(--border2);
+    }
+    .topbar-subtitle {
+      font-size: 11px;
+      color: var(--text2);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .theme-btn, .key-btn {
+      background: none;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      color: var(--text2);
+      cursor: pointer;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .theme-btn:hover, .key-btn:hover {
+      color: var(--text);
+      border-color: var(--border2);
+    }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+
+    /* ── Section headings ── */
+    .section-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 8px;
+    }
+
+    /* ── Textarea ── */
+    .input-wrap {
+      position: relative;
+      margin-bottom: 14px;
+    }
+    textarea {
+      width: 100%;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.7;
+      padding: 14px;
+      background: var(--bg2);
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      color: var(--text);
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    textarea:focus { border-color: var(--accent); }
+    textarea::placeholder { color: var(--text3); }
+    .clear-btn {
+      position: absolute;
+      top: 8px; right: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text3);
+      padding: 3px 6px;
+      font-size: 14px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    .clear-btn:hover { color: var(--text2); }
+
+    /* ── Action row ── */
+    .action-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .btn-primary {
+      flex: 1;
+      padding: 10px 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn-primary:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn-primary:not(:disabled):hover { background: var(--accent2); color: #fff; }
+    .btn-secondary {
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg3);
+      color: var(--text2);
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    .btn-secondary:hover { color: var(--text); }
+
+    /* ── Loading ── */
+    .loading {
+      text-align: center;
+      padding: 2.5rem;
+      color: var(--text2);
+      font-size: 13px;
+    }
+    .loading i { font-size: 22px; display: block; margin-bottom: 10px; color: var(--accent); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+
+    /* ── Error ── */
+    .error-box {
+      background: var(--red-dim);
+      border: 0.5px solid var(--red);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      color: var(--red);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Result header ── */
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--green-dim);
+      border: 0.5px solid var(--green);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+    }
+    .result-header i { color: var(--green); font-size: 18px; }
+    .result-name { font-weight: 500; color: var(--green); }
+    .result-meta { font-size: 11px; color: var(--green); opacity: 0.75; margin-left: 10px; }
+    .result-color-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.2);
+      flex-shrink: 0;
+    }
+    .result-color-hex { font-size: 11px; color: var(--green); opacity: 0.75; }
+
+    /* ── Tabs ── */
+    .tabs-bar {
+      display: flex;
+      border-bottom: 0.5px solid var(--border2);
+      margin-bottom: 0;
+    }
+    .tab-btn {
+      padding: 8px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text2);
+      cursor: pointer;
+      font-weight: 400;
+      margin-bottom: -0.5px;
+      transition: color 0.15s;
+    }
+    .tab-btn.active {
+      border-bottom-color: var(--text);
+      color: var(--text);
+      font-weight: 500;
+    }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+    .tab-copy {
+      margin-left: auto;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text2);
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: color 0.15s;
+    }
+    .tab-copy:hover { color: var(--text); }
+
+    /* ── Code block ── */
+    pre.code-block {
+      background: var(--bg2);
+      border: 0.5px solid var(--border2);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-y: auto;
+      max-height: 360px;
+      margin: 0;
+    }
+
+    /* ── Install steps ── */
+    .install-steps {
+      margin-top: 16px;
+      padding: 14px 16px;
+      background: var(--bg2);
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+    }
+    .install-title {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 12px;
+    }
+    .install-step {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--bg3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text2);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .step-text { color: var(--text2); line-height: 1.6; }
+
+    /* ── API Key Modal ── */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      background: var(--bg2);
+      border: 0.5px solid var(--border2);
+      border-radius: 6px;
+      padding: 28px 32px;
+      max-width: 480px;
+      width: 90%;
+    }
+    .modal-logo {
+      font-family: var(--font-head);
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .modal-logo span { color: var(--accent); }
+    .modal-desc {
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.7;
+      margin-bottom: 20px;
+    }
+    .modal-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 6px;
+    }
+    .modal-input {
+      width: 100%;
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg3);
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      color: var(--text);
+      outline: none;
+      margin-bottom: 16px;
+      transition: border-color 0.15s;
+    }
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-note {
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.6;
+      margin-bottom: 20px;
+      padding: 10px 12px;
+      background: var(--bg3);
+      border-radius: var(--radius);
+    }
+    .modal-note i { color: var(--gold); margin-right: 4px; }
+    .modal-btn {
+      width: 100%;
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .modal-btn:hover { background: var(--accent2); color: #fff; }
+    .modal-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .modal-error {
+      font-size: 12px;
+      color: var(--red);
+      margin-bottom: 12px;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── API Key Modal ── -->
+<div class="modal-backdrop" id="keyModal">
+  <div class="modal">
+    <div class="modal-logo">Joshua <span>Terminal</span></div>
+    <p class="modal-desc">
+      The Pine Script converter calls the Anthropic API directly from your browser.<br />
+      Enter your API key to get started — it's saved locally and never sent anywhere else.
+    </p>
+    <div class="modal-label">Anthropic API Key</div>
+    <input
+      class="modal-input"
+      id="keyInput"
+      type="password"
+      placeholder="sk-ant-api03-..."
+      autocomplete="off"
+    />
+    <div class="modal-note">
+      <i class="ti ti-shield-lock"></i>
+      Stored in <code>localStorage</code> under the key <code>joshua_anthropic_key</code>.
+      Never transmitted to any server other than <code>api.anthropic.com</code>.
+    </div>
+    <div class="modal-error hidden" id="keyError"></div>
+    <button class="modal-btn" id="saveKeyBtn">Save key &amp; continue →</button>
+  </div>
+</div>
+
+<!-- ── Topbar ── -->
+<header class="topbar">
+  <div class="topbar-logo">Joshua <span>Terminal</span></div>
+  <div class="topbar-sep"></div>
+  <div class="topbar-subtitle">Pine Script Converter</div>
+  <div class="topbar-right">
+    <button class="key-btn" id="resetKeyBtn" title="Update API key">
+      <i class="ti ti-key"></i> API Key
+    </button>
+    <button class="theme-btn" id="themeBtn" title="Toggle theme">
+      <i class="ti ti-moon" id="themeIcon"></i>
+    </button>
+  </div>
+</header>
+
+<!-- ── Main ── -->
+<main class="container">
+
+  <div class="section-label" style="margin-bottom:8px;">Pine Script Input</div>
+
+  <div class="input-wrap">
+    <textarea id="pineInput" rows="11" placeholder="//@version=5&#10;indicator(&quot;My Indicator&quot;, overlay=true)&#10;// paste your Pine Script here..."></textarea>
+    <button class="clear-btn hidden" id="clearBtn" title="Clear">
+      <i class="ti ti-x"></i>
+    </button>
+  </div>
+
+  <div class="action-row">
+    <button class="btn-primary" id="convertBtn" disabled>
+      Convert to Joshua Terminal ↗
+    </button>
+    <button class="btn-secondary" id="exampleBtn">Load example</button>
+  </div>
+
+  <!-- Loading -->
+  <div class="loading hidden" id="loadingEl">
+    <i class="ti ti-loader spin"></i>
+    Translating Pine Script via Claude…
+  </div>
+
+  <!-- Error -->
+  <div class="error-box hidden" id="errorEl"></div>
+
+  <!-- Result -->
+  <div id="resultEl" class="hidden">
+    <div class="result-header" id="resultHeader">
+      <i class="ti ti-check"></i>
+      <div style="flex:1">
+        <span class="result-name" id="resultName"></span>
+        <span class="result-meta" id="resultMeta"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div class="result-color-dot" id="resultDot"></div>
+        <span class="result-color-hex" id="resultHex"></span>
+      </div>
+    </div>
+
+    <div class="tabs-bar" id="tabsBar"></div>
+    <pre class="code-block" id="codeBlock"></pre>
+
+    <div class="install-steps">
+      <div class="install-title">Installation Steps</div>
+      <div id="stepsContainer"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  // ── Constants ──────────────────────────────────────────────────
+  const KEY_NAME = 'joshua_anthropic_key';
+
+  const EXAMPLE_PINE = `//@version=5
+indicator("Hull Moving Average", shorttitle="HMA", overlay=true)
+length = input.int(9, minval=1)
+hma = ta.wma(2*ta.wma(close, length/2)-ta.wma(close, length), math.round(math.sqrt(length)))
+plot(hma, color=color.new(color.purple, 0))`;
+
+  const SYSTEM_PROMPT = `You are an expert at converting TradingView Pine Script indicators to Joshua Terminal format.
+
+Joshua Terminal uses:
+- indicators.js — pure JS functions taking a candle array: [{time, open, high, low, close, volume}, ...]
+- pane.js — INDICATOR_DEFS registration + _addIndicator() switch case + _removeIndicator() handling
+- Candle data is always an array called c (or data) with fields: time (unix seconds), open, high, low, close, volume
+
+OUTPUT FORMAT — always return a JSON object with exactly these fields:
+{
+  "name": "Human readable indicator name",
+  "id": "short_snake_case_id",
+  "type": "overlay or band or subpane",
+  "color": "#hexcolor",
+  "calcFunction": "Full JS function code self-contained uses only c[] input",
+  "indicatorDefEntry": "{ id:\\"id\\", label:\\"Label\\", color:\\"#hex\\", type:\\"type\\" }",
+  "addIndicatorCase": "Full switch case code block",
+  "removeIndicatorNote": "What to add to _removeIndicator",
+  "subPaneCase": "If type is subpane the case code for _addSubPane switch. Empty string if overlay/band.",
+  "notes": "Any caveats limitations or Pine Script features that could not be translated"
+}
+
+RULES:
+- calcFunction signature: function myIndicator(data, ...params) { ... return [...] }
+- Return arrays of {time, value} objects for single lines
+- For bands return {upper, middle, lower} each being [{time, value}]
+- For multi-line return {up: [...], dn: [...]} or named arrays
+- Use Indicators.sma(), Indicators.ema(), Indicators.atr() etc. where they already exist
+- Available helpers already in indicators.js: sma(data,period), ema(data,period), atr(data,period), rsi(data,period), smaRaw(raw,period)
+- Pine Script ta.sma() = sma(), ta.ema() = ema(), ta.rsi() = rsi(), ta.atr() = atr()
+- Pine Script close = data[i].close, high = data[i].high, low = data[i].low, open = data[i].open
+- Pine Script nz(x, 0) = (x || 0)
+- type overlay = drawn on main chart as lines
+- type band = upper/middle/lower lines on main chart
+- type subpane = oscillator in separate mini-chart below
+- Output ONLY valid JSON no markdown no explanation outside the JSON`;
+
+  // ── State ──────────────────────────────────────────────────────
+  let apiKey = localStorage.getItem(KEY_NAME) || '';
+  let result = null;
+  let activeTab = 'calc';
+
+  // ── DOM refs ───────────────────────────────────────────────────
+  const keyModal   = document.getElementById('keyModal');
+  const keyInput   = document.getElementById('keyInput');
+  const saveKeyBtn = document.getElementById('saveKeyBtn');
+  const keyError   = document.getElementById('keyError');
+  const resetKeyBtn= document.getElementById('resetKeyBtn');
+  const themeBtn   = document.getElementById('themeBtn');
+  const themeIcon  = document.getElementById('themeIcon');
+  const pineInput  = document.getElementById('pineInput');
+  const clearBtn   = document.getElementById('clearBtn');
+  const convertBtn = document.getElementById('convertBtn');
+  const exampleBtn = document.getElementById('exampleBtn');
+  const loadingEl  = document.getElementById('loadingEl');
+  const errorEl    = document.getElementById('errorEl');
+  const resultEl   = document.getElementById('resultEl');
+  const tabsBar    = document.getElementById('tabsBar');
+  const codeBlock  = document.getElementById('codeBlock');
+  const stepsContainer = document.getElementById('stepsContainer');
+
+  // ── API Key Modal ──────────────────────────────────────────────
+  function showModal() {
+    keyInput.value = '';
+    keyError.classList.add('hidden');
+    keyModal.classList.remove('hidden');
+    setTimeout(() => keyInput.focus(), 50);
+  }
+  function hideModal() { keyModal.classList.add('hidden'); }
+
+  if (!apiKey) showModal();
+
+  saveKeyBtn.addEventListener('click', () => {
+    const val = keyInput.value.trim();
+    if (!val.startsWith('sk-ant-')) {
+      keyError.textContent = 'Key should start with sk-ant- — check and try again.';
+      keyError.classList.remove('hidden');
+      return;
+    }
+    apiKey = val;
+    localStorage.setItem(KEY_NAME, apiKey);
+    hideModal();
+  });
+
+  keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveKeyBtn.click(); });
+  resetKeyBtn.addEventListener('click', showModal);
+
+  // ── Theme ──────────────────────────────────────────────────────
+  const savedTheme = localStorage.getItem('joshua_theme') || 'dark';
+  document.documentElement.dataset.theme = savedTheme;
+  themeIcon.className = savedTheme === 'dark' ? 'ti ti-moon' : 'ti ti-sun';
+
+  themeBtn.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    themeIcon.className = next === 'dark' ? 'ti ti-moon' : 'ti ti-sun';
+    localStorage.setItem('joshua_theme', next);
+  });
+
+  // ── Input handling ─────────────────────────────────────────────
+  pineInput.addEventListener('input', () => {
+    const has = pineInput.value.trim().length > 0;
+    clearBtn.classList.toggle('hidden', !has);
+    convertBtn.disabled = !has;
+  });
+
+  clearBtn.addEventListener('click', () => {
+    pineInput.value = '';
+    clearBtn.classList.add('hidden');
+    convertBtn.disabled = true;
+    hide(errorEl);
+    hide(resultEl);
+    result = null;
+  });
+
+  exampleBtn.addEventListener('click', () => {
+    pineInput.value = EXAMPLE_PINE;
+    pineInput.dispatchEvent(new Event('input'));
+  });
+
+  // ── Helpers ────────────────────────────────────────────────────
+  function show(el) { el.classList.remove('hidden'); }
+  function hide(el) { el.classList.add('hidden'); }
+
+  async function copyText(text, btn) {
+    await navigator.clipboard.writeText(text);
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => btn.innerHTML = original, 2000);
+  }
+
+  // ── Tabs ───────────────────────────────────────────────────────
+  function buildTabs(r) {
+    const tabs = [
+      { key: 'calc', label: 'indicators.js', content: r.calcFunction },
+      { key: 'def',  label: 'INDICATOR_DEFS', content: `// Add to the appropriate group in INDICATOR_DEFS in pane.js:\n${r.indicatorDefEntry}` },
+      { key: 'add',  label: '_addIndicator',  content: r.addIndicatorCase },
+    ];
+    if (r.type === 'subpane') tabs.push({ key: 'sub', label: '_addSubPane', content: r.subPaneCase });
+    if (r.notes) tabs.push({ key: 'notes', label: 'Notes', content: r.notes });
+
+    tabsBar.innerHTML = '';
+    tabs.forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'tab-btn' + (t.key === activeTab ? ' active' : '');
+      btn.textContent = t.label;
+      btn.dataset.key = t.key;
+      btn.addEventListener('click', () => {
+        activeTab = t.key;
+        tabsBar.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.key === activeTab));
+        codeBlock.textContent = tabs.find(x => x.key === activeTab)?.content || '';
+      });
+      tabsBar.appendChild(btn);
+    });
+
+    // Copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'tab-copy';
+    copyBtn.innerHTML = '<i class="ti ti-copy"></i> Copy';
+    copyBtn.addEventListener('click', () => {
+      const content = tabs.find(x => x.key === activeTab)?.content || '';
+      copyText(content, copyBtn);
+    });
+    tabsBar.appendChild(copyBtn);
+
+    codeBlock.textContent = tabs.find(x => x.key === activeTab)?.content || '';
+  }
+
+  function buildSteps(r) {
+    const steps = [
+      `Add the function from the indicators.js tab into indicators.js inside the Indicators IIFE, and export it in the return statement`,
+      `Add the INDICATOR_DEFS entry from the INDICATOR_DEFS tab to the correct group in pane.js`,
+      r.type === 'subpane'
+        ? `Add the case from _addIndicator to the default branch in _addIndicator(), then add the case from _addSubPane to the _addSubPane() switch`
+        : `Add the case from _addIndicator to the switch in _addIndicator()`,
+      `If the indicator uses multiple named series (e.g. up/dn, tenkan/kijun), add handling in _removeIndicator() following existing patterns`,
+    ];
+    stepsContainer.innerHTML = steps.map((s, i) => `
+      <div class="install-step">
+        <div class="step-num">${i + 1}</div>
+        <div class="step-text">${s}</div>
+      </div>
+    `).join('');
+  }
+
+  // ── Convert ────────────────────────────────────────────────────
+  convertBtn.addEventListener('click', async () => {
+    const pine = pineInput.value.trim();
+    if (!pine || !apiKey) return;
+
+    hide(errorEl);
+    hide(resultEl);
+    show(loadingEl);
+    convertBtn.disabled = true;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 4000,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: `Convert this Pine Script indicator to Joshua Terminal format:\n\n${pine}` }],
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err?.error?.message || `API error ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = (data.content || []).map(b => b.text || '').join('');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('No JSON found in response — try again');
+
+      result = JSON.parse(match[0]);
+      activeTab = 'calc';
+
+      // Populate result header
+      document.getElementById('resultName').textContent = result.name;
+      document.getElementById('resultMeta').textContent = `id: ${result.id} · ${result.type}`;
+      document.getElementById('resultDot').style.background = result.color;
+      document.getElementById('resultHex').textContent = result.color;
+
+      buildTabs(result);
+      buildSteps(result);
+
+      show(resultEl);
+
+    } catch (e) {
+      errorEl.innerHTML = `<i class="ti ti-alert-circle" style="margin-right:6px"></i>${e.message || 'Conversion failed'}`;
+      show(errorEl);
+    } finally {
+      hide(loadingEl);
+      convertBtn.disabled = pineInput.value.trim().length === 0;
+    }
+  });
+</script>
+</body>
+</html>

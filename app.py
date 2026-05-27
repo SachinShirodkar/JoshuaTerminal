@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "trading_terminal_secret"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
 # ─── Disable browser cache for JS/CSS so updates are always picked up ────────
 
 @app.after_request
@@ -34,7 +35,6 @@ def no_cache_static(response):
         response.headers['Pragma']        = 'no-cache'
         response.headers['Expires']       = '0'
     return response
-
 
 
 # ─── Hyperliquid WS (allMids) ────────────────────────────────────────────────
@@ -330,6 +330,11 @@ def popout():
     interval = request.args.get("interval", "15m")
     source   = request.args.get("source",   "oanda")
     return render_template("popout.html", symbol=symbol, interval=interval, source=source)
+
+
+@app.route("/tools/pine-converter")
+def pine_converter():
+    return render_template("pine-converter.html")
 
 
 @app.route("/debug")

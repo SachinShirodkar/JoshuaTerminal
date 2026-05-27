@@ -45,6 +45,9 @@ const INDICATOR_DEFS = [
     { id:"williams", label:"Williams %R",         color:"#00e676", type:"subpane" },
     { id:"momentum", label:"Momentum (10)",       color:"#ffca28", type:"subpane" },
   ]},
+  { group: "Others", items: [
+   { id: "sd_zones_auto_fib", label: "S/D Zones & Auto Fib", color: "#5b9cf6", type: "overlay" }, 
+  ]},
 ];
 
 window.INDICATOR_DEFS = INDICATOR_DEFS;
@@ -101,6 +104,8 @@ class ChartPane {
     this._posIdCounter    = 0;
     this._posPreview      = null;   // { side, entryPrice, slPrice, tpPrice } preview
     this._posCanvas       = null;   // shared canvas for block rendering
+    this._sdCanvas        = null;   // canvas for S/D zones & fib overlay
+    this._sdData          = null;   // { supplyZones, demandZones, fibLevels }
 
     // ── Persistence state ────────────────────────────────
     this._isDirty         = false;  // true when there are unsaved changes
@@ -657,6 +662,30 @@ class ChartPane {
             )
           ); break;
         }
+        case 'sd_zones_auto_fib': {
+          const result = Indicators.sdZonesAutoFib(
+            this.candles, 3, 10, 0.1, 5, true,
+            [0.0, 0.5, 0.618, 0.786, 0.88, 1.0, -0.27, -0.618]
+          );
+          // Resolve zone times up front (indices → timestamps)
+          this._sdData = {
+            supplyZones: (result.supplyZones || []).map(z => ({
+              t0: this.candles[z.leftIdx].time,
+              t1: this.candles[z.rightIdx].time,
+              top: z.top, bottom: z.bottom,
+            })),
+            demandZones: (result.demandZones || []).map(z => ({
+              t0: this.candles[z.leftIdx].time,
+              t1: this.candles[z.rightIdx].time,
+              top: z.top, bottom: z.bottom,
+            })),
+            fibLevels: result.fibLevels || [],
+          };
+          this._initSdCanvas();
+          this._sdRender();
+          this.indicatorSeries[id] = '__sd_canvas__'; // sentinel so _removeIndicator knows it exists
+          break;
+        }
         default:
           if (def.type === 'subpane') this._addSubPane(id, def, c);
       }
@@ -776,12 +805,21 @@ class ChartPane {
   _removeIndicator(id) {
     const s = this.indicatorSeries[id];
     if (s) {
-      const rm = x => { if(x) { try { this.chart.removeSeries(x); } catch(e){} } };
-      if (Array.isArray(s))    s.forEach(rm);
-      else if (s.upper  !== undefined) { rm(s.upper); rm(s.lower); rm(s.middle); }
-      else if (s.tenkan !== undefined) { rm(s.tenkan); rm(s.kijun); rm(s.chikou); rm(s.senkouA); rm(s.senkouB); }
-      else if (s.up     !== undefined) { rm(s.up); rm(s.dn); }
-      else rm(s);
+      if (s === '__sd_canvas__') {
+        // Remove the SD zones canvas layer
+        if (this._sdCanvas) {
+          try { this._sdCanvas.remove(); } catch(e) {}
+          this._sdCanvas = null;
+        }
+        this._sdData = null;
+      } else {
+        const rm = x => { if(x) { try { this.chart.removeSeries(x); } catch(e){} } };
+        if (Array.isArray(s))    s.forEach(rm);
+        else if (s.upper  !== undefined) { rm(s.upper); rm(s.lower); rm(s.middle); }
+        else if (s.tenkan !== undefined) { rm(s.tenkan); rm(s.kijun); rm(s.chikou); rm(s.senkouA); rm(s.senkouB); }
+        else if (s.up     !== undefined) { rm(s.up); rm(s.dn); }
+        else rm(s);
+      }
       delete this.indicatorSeries[id];
     }
     if (this.subPanes[id]) {
@@ -1925,6 +1963,135 @@ class ChartPane {
   }
 
   // ── Canvas render ────────────────────────────────────────────────────────
+  // ── S/D Zones canvas layer ──────────────────────────────────────────────────
+  _initSdCanvas() {
+    // If a canvas already exists (re-adding indicator), remove it first
+    if (this._sdCanvas) { try { this._sdCanvas.remove(); } catch(e) {} }
+
+    const chartEl = document.getElementById(`pane-chart-${this.id}`);
+    if (!chartEl) return;
+
+    const cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;z-index:7;pointer-events:none;';
+    cv.width  = chartEl.offsetWidth  || 600;
+    cv.height = chartEl.offsetHeight || 400;
+    chartEl.appendChild(cv);
+    this._sdCanvas = cv;
+
+    // Resize with chart
+    new ResizeObserver(() => {
+      cv.width  = chartEl.offsetWidth;
+      cv.height = chartEl.offsetHeight;
+      this._sdRender();
+    }).observe(chartEl);
+
+    // Redraw on scroll / zoom / crosshair
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._sdRender());
+    this.chart.subscribeCrosshairMove(() => this._sdRender());
+  }
+
+  _sdRender() {
+    const cv = this._sdCanvas;
+    if (!cv || !this._sdData) return;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const dec = this._symbolPriceFormat ? this._symbolPriceFormat().dec : 5;
+
+    const toX = t => {
+      try {
+        const x = this.chart.timeScale().timeToCoordinate(t);
+        if (x !== null) return x;
+        // Extrapolate beyond visible range
+        const c = this.candles;
+        if (!c || c.length < 2) return null;
+        const lastX = this.chart.timeScale().timeToCoordinate(c[c.length-1].time);
+        const prevX = this.chart.timeScale().timeToCoordinate(c[c.length-2].time);
+        if (lastX === null || prevX === null) return null;
+        const pxPerBar = lastX - prevX;
+        const barMs    = c[c.length-1].time - c[c.length-2].time;
+        if (!barMs) return lastX;
+        return lastX + ((t - c[c.length-1].time) / barMs) * pxPerBar;
+      } catch(e) { return null; }
+    };
+    const toY = p => { try { return this.candleSeries.priceToCoordinate(p); } catch(e) { return null; } };
+
+    // ── Supply zones (red) ────────────────────────────────────────────────────
+    for (const z of (this._sdData.supplyZones || [])) {
+      const x0 = toX(z.t0), x1 = toX(z.t1);
+      const y0 = toY(z.top), y1 = toY(z.bottom);
+      if (x0===null||x1===null||y0===null||y1===null) continue;
+      const rx = Math.min(x0, x1), ry = Math.min(y0, y1);
+      const rw = Math.abs(x1 - x0), rh = Math.abs(y1 - y0);
+      // Fill
+      ctx.fillStyle = 'rgba(255,61,90,0.12)';
+      ctx.fillRect(rx, ry, rw, rh);
+      // Border lines (top + bottom only)
+      ctx.strokeStyle = 'rgba(255,61,90,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(rx, y0); ctx.lineTo(rx + rw, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx, y1); ctx.lineTo(rx + rw, y1); ctx.stroke();
+      // Label on right edge
+      if (rh > 10) {
+        ctx.fillStyle = 'rgba(255,61,90,0.9)';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('SUPPLY', rx + rw - 4, ry + 11);
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.fillStyle = 'rgba(255,61,90,0.6)';
+        ctx.fillText(z.top.toFixed(dec), rx + rw - 4, ry + rh - 3);
+      }
+    }
+
+    // ── Demand zones (green) ──────────────────────────────────────────────────
+    for (const z of (this._sdData.demandZones || [])) {
+      const x0 = toX(z.t0), x1 = toX(z.t1);
+      const y0 = toY(z.top), y1 = toY(z.bottom);
+      if (x0===null||x1===null||y0===null||y1===null) continue;
+      const rx = Math.min(x0, x1), ry = Math.min(y0, y1);
+      const rw = Math.abs(x1 - x0), rh = Math.abs(y1 - y0);
+      // Fill
+      ctx.fillStyle = 'rgba(0,230,118,0.10)';
+      ctx.fillRect(rx, ry, rw, rh);
+      // Border lines
+      ctx.strokeStyle = 'rgba(0,230,118,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(rx, y0); ctx.lineTo(rx + rw, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx, y1); ctx.lineTo(rx + rw, y1); ctx.stroke();
+      // Label
+      if (rh > 10) {
+        ctx.fillStyle = 'rgba(0,230,118,0.9)';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('DEMAND', rx + rw - 4, ry + 11);
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.fillStyle = 'rgba(0,230,118,0.6)';
+        ctx.fillText(z.bottom.toFixed(dec), rx + rw - 4, ry + rh - 3);
+      }
+    }
+
+    // ── Fibonacci levels (dashed lines across full width) ─────────────────────
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1;
+    for (const fib of (this._sdData.fibLevels || [])) {
+      const y = toY(fib.price);
+      if (y === null) continue;
+      ctx.strokeStyle = 'rgba(91,156,246,0.55)';
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      // Label: level ratio + price
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(91,156,246,0.85)';
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${fib.level.toFixed(3)}  ${fib.price.toFixed(dec)}`, W - 4, y - 3);
+      ctx.setLineDash([5, 4]);
+    }
+    ctx.setLineDash([]);
+  }
+
   _trendRender() {
     const cv = this._trendCanvas;
     if (!cv) return;

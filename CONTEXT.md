@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: session ending after notes panel, multi-monitor, alert engine, new indicators, drawing fixes_
+_Last updated: session adding Pine converter tool, S/D Zones & Auto Fib indicator, canvas rendering fixes_
 
 ---
 
@@ -29,9 +29,11 @@ joshua_terminal/
 ├── requirements.txt
 ├── .env                    # OANDA + Telegram credentials (not committed to git)
 ├── .env.example            # Template for .env
+├── Indicators.md           # Log of all Pine Script indicators converted to JS (with notes)
 ├── templates/
 │   ├── index.html          # Single-page shell — topbar, grid, flyouts, panels, scripts
-│   └── popout.html         # Standalone chart window for multi-monitor popout
+│   ├── popout.html         # Standalone chart window for multi-monitor popout
+│   └── pine-converter.html # Pine Script → Joshua Terminal converter tool (standalone, API-key modal)
 └── static/
     ├── css/
     │   └── style.css       # All styles — CSS vars, light/dark theme, pane, toolbar, flyouts, panels
@@ -63,11 +65,23 @@ joshua_terminal/
 - ✅ **Screenshot/export** — 📷 button per pane, composites all canvas layers (chart + trendlines + positions), downloads as `SYMBOL_INTERVAL_DATE.png`
 - ✅ **Connection status dots** — HL, YF, OANDA dots in topbar; OANDA lights green on first price tick
 
-### Indicators (25+, all client-side maths in indicators.js)
+### Pine Script Converter Tool
+- ✅ Standalone HTML tool served at `http://localhost:5050/tools/pine-converter`
+- ✅ Template: `templates/pine-converter.html` — self-contained, no server-side logic
+- ✅ Calls Anthropic API directly from browser (`claude-sonnet-4-5`) with `anthropic-dangerous-direct-browser-access: true`
+- ✅ API key stored in `localStorage` as `joshua_anthropic_key` — prompted via modal on first visit, never hardcoded
+- ✅ Reset key button in topbar; theme syncs with Joshua Terminal (`joshua_theme` localStorage key)
+- ✅ Output tabs: `indicators.js` function, `INDICATOR_DEFS` entry, `_addIndicator` case, `_addSubPane` case (if subpane), Notes
+- ✅ Installation steps rendered per conversion result
+- ✅ Flask route: `GET /tools/pine-converter` → `render_template('pine-converter.html')`
+- ⚠️ Converter generates correct **math** (indicators.js functions) but may hallucinate rendering APIs for complex visual types (boxes, canvas). Always validate `_addIndicator` case against actual pane.js patterns before use. When in doubt, bring the output to Claude with the indicator description for validation.
+
+### Indicators (26+, all client-side maths in indicators.js)
 - ✅ SMA 20/50/200, EMA 20/50/200, VWAP, VWMA 20 (overlay)
 - ✅ Bollinger Bands, Donchian Channel, Keltner Channel (bands)
 - ✅ Supertrend (10,3), Ichimoku Cloud (9/26/52), Parabolic SAR, Pivot Points (overlay/trend)
 - ✅ Volume, RSI, MACD, Stochastic, Stoch RSI, ATR, ADX, CCI, CMF, OBV, MFI, Williams %R, Momentum (sub-pane oscillators)
+- ✅ **S/D Zones & Major Structure Auto Fib** (overlay, canvas-rendered) — see Indicators.md for full notes
 
 ### Drawing Tools (all in pane.js)
 - ✅ Fibonacci retracement — click+drag, editable level panel, custom levels, hover highlight
@@ -155,10 +169,27 @@ User clicks ⧉ on pane → window.open('/popout?symbol=EURUSD&interval=15m&sour
 ### pane.js — ChartPane class
 - Chart init deferred until ResizeObserver fires
 - Drawing layer = transparent `<div>` overlay, z-index 5
-- Trendline/hline/vline canvas at z-index 8 (pointer-events: none)
-- Position blocks on separate `<canvas>` at z-index 6
+- Position blocks canvas at z-index 6
+- S/D Zones canvas (`_sdCanvas`) at z-index 7 — created on demand by `_initSdCanvas()`
+- Trendline/hline/vline canvas (`_trendCanvas`) at z-index 8 (pointer-events: none)
 - `_updateDrawingUI()` dispatches `drawing-tool-exited` CustomEvent when drawingMode clears → app.js closes flyout
 - `applyTheme(chartBg, chartText, subText)` — updates Lightweight Charts layout options on all sub-panes
+
+### Canvas-rendered indicators (pane.js pattern)
+Indicators that require filled boxes, zones, or complex shapes that Lightweight Charts line series cannot express use a dedicated `<canvas>` layer. The established pattern is:
+- Create canvas in `_init<Name>Canvas()`, append to `chartEl`, z-index between 6 and 8
+- Subscribe to `timeScale().subscribeVisibleLogicalRangeChange()` and `subscribeCrosshairMove()` for redraws on scroll/zoom
+- Use `this.chart.timeScale().timeToCoordinate(t)` for X and `this.candleSeries.priceToCoordinate(p)` for Y
+- Store canvas ref as `this._<name>Canvas` and data as `this._<name>Data`
+- In `_removeIndicator()`, check for sentinel string (e.g. `'__sd_canvas__'`) and remove the canvas element
+- Existing canvas layers: `_posCanvas` (positions, z-6), `_sdCanvas` (S/D zones, z-7), `_trendCanvas` (drawings, z-8)
+
+### Coordinate helpers available in ChartPane
+- `_priceToPixel(price)` → Y pixel via `candleSeries.priceToCoordinate()`
+- `_trendPriceToY(price)` → same, used in trendline rendering
+- `_trendTimeToX(time)` → X pixel via `timeScale().timeToCoordinate()`, extrapolates beyond last candle
+- `_pixelToPrice(y)` → reverse via `candleSeries.coordinateToPrice()`
+- `_symbolPriceFormat()` → returns `{ dec }` for decimal places
 
 ### alert_engine.js
 - Cooldown map keyed by `symbol:level:direction` — 60s silence after firing
@@ -201,6 +232,7 @@ TELEGRAM_CHAT_ID=-123456789  # note: group chat IDs are negative
 - [ ] **Indicator alerts** — AlertEngine.trigger() already generic, just need to call from RSI/MACD etc. crossing levels
 - [ ] **Notes export** — download all notes as CSV or PDF
 - [ ] **More indicators** — custom periods, Ichimoku alerts, additional oscillators
+- [ ] **Pine converter improvements** — add Joshua Terminal rendering context to system prompt so it stops hallucinating canvas APIs for box-based indicators
 
 ---
 
@@ -210,6 +242,8 @@ TELEGRAM_CHAT_ID=-123456789  # note: group chat IDs are negative
 - Fib levels are global per symbol — changing levels on one fib changes all fibs for that symbol (intentional)
 - Browser cache is aggressive — always do a full cache clear (last 24hrs) if changes don't appear after hard refresh
 - Telegram group chat IDs are negative numbers — a common gotcha
+- Pine converter uses `claude-sonnet-4-5` (current valid model string as of May 2026). Update if API returns model-not-found errors.
+- Canvas-rendered indicators (`_sdCanvas` etc.) are not persisted in state_store — they are recomputed from candle data on every load, so no special save/restore logic needed.
 
 ---
 
@@ -223,3 +257,4 @@ python app.py
 ```
 Debug endpoint: `http://localhost:5050/debug`
 Popout endpoint: `http://localhost:5050/popout?symbol=EUR/USD&interval=15m&source=oanda`
+Pine converter: `http://localhost:5050/tools/pine-converter`

@@ -5,6 +5,160 @@
 
 const Indicators = (() => {
 
+
+// ------S/D Zones & Major Structure Auto Fib-----------------
+
+function sdZonesAutoFib(data, pivotLenSND = 3, majorPivotLen = 10, zoneSens = 0.1, zoneCount = 5, showFibs = true, fibLevels = [0.0, 0.5, 0.618, 0.786, 0.88, 1.0, -0.27, -0.618]) {
+  if (!data || data.length < Math.max(pivotLenSND * 2 + 1, majorPivotLen * 2 + 1)) return { supplyZones: [], demandZones: [], fibLevels: [] };
+
+  // Helper: Find pivot high
+  function pivotHigh(data, idx, len) {
+    if (idx < len || idx >= data.length - len) return null;
+    const centerHigh = data[idx].high;
+    for (let i = 1; i <= len; i++) {
+      if (data[idx - i].high >= centerHigh || data[idx + i].high >= centerHigh) return null;
+    }
+    return centerHigh;
+  }
+
+  // Helper: Find pivot low
+  function pivotLow(data, idx, len) {
+    if (idx < len || idx >= data.length - len) return null;
+    const centerLow = data[idx].low;
+    for (let i = 1; i <= len; i++) {
+      if (data[idx - i].low <= centerLow || data[idx + i].low <= centerLow) return null;
+    }
+    return centerLow;
+  }
+
+  let lastHiVal = null, lastHiIdx = null, lastHiLow = null;
+  let lastLoVal = null, lastLoIdx = null, lastLoHigh = null;
+  let majorHi = null, majorHiIdx = null;
+  let majorLo = null, majorLoIdx = null;
+  
+  let supplyZones = [];
+  let demandZones = [];
+  let lastSupplyPrice = 0.0;
+  let lastDemandPrice = 0.0;
+
+  // Process data to detect pivots and BOS
+  for (let i = Math.max(pivotLenSND, majorPivotLen); i < data.length; i++) {
+    // S/D Pivots
+    const pHiSND = pivotHigh(data, i - pivotLenSND, pivotLenSND);
+    const pLoSND = pivotLow(data, i - pivotLenSND, pivotLenSND);
+    
+    if (pHiSND !== null) {
+      lastHiVal = pHiSND;
+      lastHiIdx = i - pivotLenSND;
+      lastHiLow = data[i - pivotLenSND].low;
+    }
+    
+    if (pLoSND !== null) {
+      lastLoVal = pLoSND;
+      lastLoIdx = i - pivotLenSND;
+      lastLoHigh = data[i - pivotLenSND].high;
+    }
+
+    // Major Structure Pivots
+    const pHiMajor = pivotHigh(data, i - majorPivotLen, majorPivotLen);
+    const pLoMajor = pivotLow(data, i - majorPivotLen, majorPivotLen);
+    
+    if (pHiMajor !== null) {
+      majorHi = pHiMajor;
+      majorHiIdx = i - majorPivotLen;
+    }
+    
+    if (pLoMajor !== null) {
+      majorLo = pLoMajor;
+      majorLoIdx = i - majorPivotLen;
+    }
+
+    // Detect BOS
+    const prevClose = i > 0 ? data[i - 1].close : data[i].close;
+    const currClose = data[i].close;
+    
+    const bearishBOS = lastLoVal !== null && lastHiVal !== null && currClose < lastLoVal && prevClose >= lastLoVal;
+    const bullishBOS = lastHiVal !== null && lastLoVal !== null && currClose > lastHiVal && prevClose <= lastHiVal;
+
+    // Create Supply Zone on bearish BOS
+    if (bearishBOS) {
+      const priceDiff = Math.abs(lastHiVal - lastSupplyPrice) / (lastHiVal !== 0 ? lastHiVal : 1) * 100;
+      if (lastSupplyPrice === 0.0 || priceDiff > zoneSens) {
+        supplyZones.push({
+          leftIdx: lastHiIdx,
+          rightIdx: i,
+          top: lastHiVal,
+          bottom: lastHiLow,
+          active: true
+        });
+        lastSupplyPrice = lastHiVal;
+      }
+    }
+
+    // Create Demand Zone on bullish BOS
+    if (bullishBOS) {
+      const priceDiff = Math.abs(lastLoVal - lastDemandPrice) / (lastLoVal !== 0 ? lastLoVal : 1) * 100;
+      if (lastDemandPrice === 0.0 || priceDiff > zoneSens) {
+        demandZones.push({
+          leftIdx: lastLoIdx,
+          rightIdx: i,
+          top: lastLoHigh,
+          bottom: lastLoVal,
+          active: true
+        });
+        lastDemandPrice = lastLoVal;
+      }
+    }
+
+    // Update zone extensions and check mitigation
+    supplyZones = supplyZones.filter(zone => {
+      if (!zone.active) return false;
+      zone.rightIdx = i;
+      if (currClose > zone.top) {
+        zone.active = false;
+        return false;
+      }
+      return true;
+    });
+
+    demandZones = demandZones.filter(zone => {
+      if (!zone.active) return false;
+      zone.rightIdx = i;
+      if (currClose < zone.bottom) {
+        zone.active = false;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Limit to max zones
+  if (supplyZones.length > zoneCount) {
+    supplyZones = supplyZones.slice(-zoneCount);
+  }
+  if (demandZones.length > zoneCount) {
+    demandZones = demandZones.slice(-zoneCount);
+  }
+
+  // Calculate Fibonacci levels
+  let fibs = [];
+  if (showFibs && majorHi !== null && majorLo !== null && majorHiIdx !== null && majorLoIdx !== null) {
+    const startPrice = majorHiIdx > majorLoIdx ? majorLo : majorHi;
+    const endPrice = majorHiIdx > majorLoIdx ? majorHi : majorLo;
+    const diff = startPrice - endPrice;
+    
+    fibLevels.forEach(level => {
+      const targetPrice = endPrice + (diff * level);
+      fibs.push({
+        level: level,
+        price: targetPrice
+      });
+    });
+  }
+
+  return { supplyZones, demandZones, fibLevels: fibs };
+}
+
   // ─── Moving Averages ─────────────────────────────────
 
   function sma(data, period) {
@@ -419,6 +573,7 @@ const Indicators = (() => {
     bollingerBands, donchian, keltner,
     atr, rsi, macd, stochastic, adx, cci, obv, mfi, williamsR,
     supertrend, pivotPoints, volumeBars,
-    ichimoku, parabolicSAR, cmf, momentum, stochRSI,
+    ichimoku, parabolicSAR, cmf, momentum, stochRSI,sdZonesAutoFib,
   };
 })();
+
