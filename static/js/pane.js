@@ -46,7 +46,8 @@ const INDICATOR_DEFS = [
     { id:"momentum", label:"Momentum (10)",       color:"#ffca28", type:"subpane" },
   ]},
   { group: "Others", items: [
-   { id: "sd_zones_auto_fib", label: "S/D Zones & Auto Fib", color: "#5b9cf6", type: "overlay" }, 
+   { id: "sd_zones_auto_fib", label: "S/D Zones & Auto Fib", color: "#5b9cf6", type: "overlay" },
+   { id: "order_blocks",      label: "Order Blocks",          color: "#DBA632", type: "overlay" },
   ]},
 ];
 
@@ -106,6 +107,8 @@ class ChartPane {
     this._posCanvas       = null;   // shared canvas for block rendering
     this._sdCanvas        = null;   // canvas for S/D zones & fib overlay
     this._sdData          = null;   // { supplyZones, demandZones, fibLevels }
+    this._obCanvas        = null;   // canvas for Order Blocks overlay
+    this._obData          = null;   // { bearishBlocks, bullishBlocks, bosLines }
 
     // ── Persistence state ────────────────────────────────
     this._isDirty         = false;  // true when there are unsaved changes
@@ -522,13 +525,37 @@ class ChartPane {
     }
 
     if (this.candles.length > 0) {
-      const last = { ...this.candles[this.candles.length - 1] };
-      last.close = price;
-      last.high  = Math.max(last.high, price);
-      last.low   = Math.min(last.low,  price);
-      this.candles[this.candles.length - 1] = last;
-      try { this.candleSeries.update(last); } catch(e) {}
+      const intervalMs = this._intervalToMs(this.interval);
+      const nowSec     = Math.floor(Date.now() / 1000);
+      const last       = this.candles[this.candles.length - 1];
+      const barEndSec  = last.time + Math.floor(intervalMs / 1000);
+
+      if (intervalMs > 0 && nowSec >= barEndSec) {
+        // Advance to the next bar boundary (handles gaps if multiple bars missed)
+        const barDurSec   = Math.floor(intervalMs / 1000);
+        const barsElapsed = Math.floor((nowSec - last.time) / barDurSec);
+        const newBarTime  = last.time + barsElapsed * barDurSec;
+        const newBar = { time: newBarTime, open: price, high: price, low: price, close: price };
+        this.candles.push(newBar);
+        try { this.candleSeries.update(newBar); } catch(e) {}
+      } else {
+        const updated = { ...last, close: price,
+          high: Math.max(last.high, price),
+          low:  Math.min(last.low,  price) };
+        this.candles[this.candles.length - 1] = updated;
+        try { this.candleSeries.update(updated); } catch(e) {}
+      }
     }
+  }
+
+  // Convert interval string to milliseconds
+  _intervalToMs(interval) {
+    const map = {
+      '1m':  60,    '3m':  180,   '5m':   300,  '15m':  900,
+      '30m': 1800,  '1h':  3600,  '2h':   7200, '4h':   14400,
+      '8h':  28800, '12h': 43200, '1d':   86400, '1w':  604800,
+    };
+    return (map[interval] || 0) * 1000;
   }
 
   _updateTicker(price, prev, change, changePct, dir) {
@@ -686,6 +713,24 @@ class ChartPane {
           this.indicatorSeries[id] = '__sd_canvas__'; // sentinel so _removeIndicator knows it exists
           break;
         }
+        case 'order_blocks': {
+          const result = Indicators.orderBlocks(
+            this.candles,
+            25,    // inputRange
+            false, // showBearishBOS
+            false, // showBullishBOS
+            false  // useMitigatedBlocks
+          );
+          this._obData = {
+            bearishBlocks: result.bearishBlocks,
+            bullishBlocks: result.bullishBlocks,
+            bosLines:      result.bosLines,
+          };
+          this._initObCanvas();
+          this._obRender();
+          this.indicatorSeries[id] = '__ob_canvas__';
+          break;
+        }
         default:
           if (def.type === 'subpane') this._addSubPane(id, def, c);
       }
@@ -812,6 +857,12 @@ class ChartPane {
           this._sdCanvas = null;
         }
         this._sdData = null;
+      } else if (s === '__ob_canvas__') {
+        if (this._obCanvas) {
+          try { this._obCanvas.remove(); } catch(e) {}
+          this._obCanvas = null;
+        }
+        this._obData = null;
       } else {
         const rm = x => { if(x) { try { this.chart.removeSeries(x); } catch(e){} } };
         if (Array.isArray(s))    s.forEach(rm);
@@ -2092,6 +2143,120 @@ class ChartPane {
     ctx.setLineDash([]);
   }
 
+  _initObCanvas() {
+    if (this._obCanvas) { try { this._obCanvas.remove(); } catch(e) {} }
+    const chartEl = document.getElementById(`pane-chart-${this.id}`);
+    if (!chartEl) return;
+    const cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;z-index:8;pointer-events:none;';
+    cv.width  = chartEl.offsetWidth  || 600;
+    cv.height = chartEl.offsetHeight || 400;
+    chartEl.appendChild(cv);
+    this._obCanvas = cv;
+    new ResizeObserver(() => {
+      cv.width  = chartEl.offsetWidth;
+      cv.height = chartEl.offsetHeight;
+      this._obRender();
+    }).observe(chartEl);
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._obRender());
+    this.chart.subscribeCrosshairMove(() => this._obRender());
+  }
+
+  _obRender() {
+    const cv = this._obCanvas;
+    if (!cv || !this._obData) return;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const dec = this._symbolPriceFormat ? this._symbolPriceFormat().dec : 5;
+
+    const toX = t => {
+      try {
+        const x = this.chart.timeScale().timeToCoordinate(t);
+        if (x !== null) return x;
+        const c = this.candles;
+        if (!c || c.length < 2) return null;
+        const lastX = this.chart.timeScale().timeToCoordinate(c[c.length-1].time);
+        const prevX = this.chart.timeScale().timeToCoordinate(c[c.length-2].time);
+        if (lastX === null || prevX === null) return null;
+        const pxPerBar = lastX - prevX;
+        const barMs    = c[c.length-1].time - c[c.length-2].time;
+        if (!barMs) return lastX;
+        return lastX + ((t - c[c.length-1].time) / barMs) * pxPerBar;
+      } catch(e) { return null; }
+    };
+    const toY = p => { try { return this.candleSeries.priceToCoordinate(p); } catch(e) { return null; } };
+
+    // ── Bearish order blocks (gold/grey if mitigated) ────────────────────────
+    for (const block of (this._obData.bearishBlocks || [])) {
+      const x0 = toX(block.startTime);
+      const y0 = toY(block.top), y1 = toY(block.bottom);
+      if (x0 === null || y0 === null || y1 === null) continue;
+      const ry = Math.min(y0, y1), rh = Math.abs(y1 - y0);
+      const rw = W - x0;
+      ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.08)' : 'rgba(219,166,50,0.07)';
+      ctx.fillRect(x0, ry, rw, rh);
+      ctx.strokeStyle = block.isMitigated ? 'rgba(207,203,202,0.4)' : 'rgba(219,166,50,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + rw, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0 + rw, y1); ctx.stroke();
+      if (rh > 10) {
+        ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.7)' : 'rgba(219,166,50,0.9)';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('OB ▼', W - 4, ry + 11);
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.5)' : 'rgba(219,166,50,0.6)';
+        ctx.fillText(block.top.toFixed(dec), W - 4, ry + rh - 3);
+      }
+    }
+
+    // ── Bullish order blocks (green/grey if mitigated) ───────────────────────
+    for (const block of (this._obData.bullishBlocks || [])) {
+      const x0 = toX(block.startTime);
+      const y0 = toY(block.top), y1 = toY(block.bottom);
+      if (x0 === null || y0 === null || y1 === null) continue;
+      const ry = Math.min(y0, y1), rh = Math.abs(y1 - y0);
+      const rw = W - x0;
+      ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.08)' : 'rgba(192,230,174,0.07)';
+      ctx.fillRect(x0, ry, rw, rh);
+      ctx.strokeStyle = block.isMitigated ? 'rgba(207,203,202,0.4)' : 'rgba(192,230,174,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + rw, y0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0 + rw, y1); ctx.stroke();
+      if (rh > 10) {
+        ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.7)' : 'rgba(192,230,174,0.9)';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('OB ▲', W - 4, ry + 11);
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.fillStyle = block.isMitigated ? 'rgba(207,203,202,0.5)' : 'rgba(192,230,174,0.6)';
+        ctx.fillText(block.bottom.toFixed(dec), W - 4, ry + rh - 3);
+      }
+    }
+
+    // ── BOS lines ────────────────────────────────────────────────────────────
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    for (const line of (this._obData.bosLines || [])) {
+      const x0 = toX(line.startTime), x1 = toX(line.endTime);
+      const y  = toY(line.value);
+      if (x0 === null || x1 === null || y === null) continue;
+      ctx.strokeStyle = line.color;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = line.color;
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('BOS', x1 - 4, y - 3);
+      ctx.setLineDash([6, 4]);
+    }
+    ctx.setLineDash([]);
+  }
+
   _trendRender() {
     const cv = this._trendCanvas;
     if (!cv) return;
@@ -2778,6 +2943,8 @@ class ChartPane {
     out.width = w; out.height = h;
     const ctx = out.getContext('2d');
     ctx.drawImage(baseCanvas, 0, 0);
+    if (this._sdCanvas)    ctx.drawImage(this._sdCanvas,    0, 0);
+    if (this._obCanvas)    ctx.drawImage(this._obCanvas,    0, 0);
     if (this._trendCanvas) ctx.drawImage(this._trendCanvas, 0, 0);
     if (this._posCanvas)   ctx.drawImage(this._posCanvas,   0, 0);
     const date = new Date().toISOString().slice(0, 10);

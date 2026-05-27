@@ -568,12 +568,114 @@ function sdZonesAutoFib(data, pivotLenSND = 3, majorPivotLen = 10, zoneSens = 0.
     return { k: kSmoothed, d: dLine };
   }
 
+// ------Order Blocks-----------------
+
+function orderBlocks(data, inputRange = 25, showBearishBOS = false, showBullishBOS = false, useMitigatedBlocks = false) {
+  if (!data || data.length < inputRange + 10) return { bullishBlocks: [], bearishBlocks: [], bosLines: [] };
+
+  const bullishBlocks = [];
+  const bearishBlocks = [];
+  const bosLines = [];
+
+  let lastDownIndex = 0;
+  let lastDown = 0;
+  let lastLow = 0;
+  let lastUpIndex = 0;
+  let lastUp = 0;
+  let lastUpLow = 0;
+  let lastHigh = 0;
+  let lastShortIndex = 0;
+  let lastLongIndex = 0;
+
+  function lowestInRange(startIdx, range) {
+    let minVal = Infinity, minIdx = startIdx;
+    for (let i = 0; i < range && (startIdx - i) >= 0; i++) {
+      const idx = startIdx - i;
+      if (data[idx].low < minVal) { minVal = data[idx].low; minIdx = idx; }
+    }
+    return { value: minVal, index: minIdx };
+  }
+
+  function highestInRange(startIdx, range) {
+    let maxVal = -Infinity, maxIdx = startIdx;
+    for (let i = 0; i < range && (startIdx - i) >= 0; i++) {
+      const idx = startIdx - i;
+      if (data[idx].high > maxVal) { maxVal = data[idx].high; maxIdx = idx; }
+    }
+    return { value: maxVal, index: maxIdx };
+  }
+
+  for (let i = inputRange + 1; i < data.length; i++) {
+    const structureLowData  = lowestInRange(i - 1, inputRange);
+    const structureLow      = structureLowData.value;
+    const structureLowIndex = structureLowData.index;
+    const structureHighData  = highestInRange(i - 1, inputRange);
+    const structureHigh      = structureHighData.value;
+    const structureHighIndex = structureHighData.index;
+
+    if (data[i].high > lastUp || lastUp === 0) {
+      lastUp = data[i].high; lastUpIndex = i;
+      lastUpLow = data[i].low; lastHigh = data[i].high;
+    }
+    if (data[i].low < lastDown || lastDown === 0) {
+      lastDown = data[i].low; lastDownIndex = i; lastLow = data[i].low;
+    }
+
+    // Bearish BOS
+    if (i > 0 && data[i].close < structureLow && data[i - 1].close >= structureLow) {
+      if ((i - lastUpIndex) < 1000 && lastUpIndex > 0) {
+        bearishBlocks.push({
+          startTime: data[lastUpIndex].time, endTime: data[i].time,
+          top: lastHigh, bottom: lastUpLow, isMitigated: false, createdAt: i
+        });
+        if (showBearishBOS) {
+          bosLines.push({
+            startTime: data[structureLowIndex].time, endTime: data[i].time,
+            value: structureLow, color: '#ff4040', type: 'bearish'
+          });
+        }
+        lastShortIndex = lastUpIndex;
+      }
+    }
+
+    // Bullish BOS
+    if (i > 0 && data[i].close > structureHigh && data[i - 1].close <= structureHigh) {
+      if ((i - lastDownIndex) < 1000 && lastDownIndex > 0) {
+        bullishBlocks.push({
+          startTime: data[lastDownIndex].time, endTime: data[i].time,
+          top: data[lastDownIndex].high, bottom: lastLow, isMitigated: false, createdAt: i
+        });
+        if (showBullishBOS) {
+          bosLines.push({
+            startTime: data[structureHighIndex].time, endTime: data[i].time,
+            value: structureHigh, color: '#00e676', type: 'bullish'
+          });
+        }
+        lastLongIndex = lastDownIndex;
+      }
+    }
+
+    // Mark mitigated
+    for (const block of bearishBlocks) {
+      if (!block.isMitigated && data[i].close > block.top) block.isMitigated = true;
+    }
+    for (const block of bullishBlocks) {
+      if (!block.isMitigated && data[i].close < block.bottom) block.isMitigated = true;
+    }
+  }
+
+  const filteredBearish = useMitigatedBlocks ? bearishBlocks : bearishBlocks.filter(b => !b.isMitigated);
+  const filteredBullish = useMitigatedBlocks ? bullishBlocks : bullishBlocks.filter(b => !b.isMitigated);
+
+  return { bullishBlocks: filteredBullish, bearishBlocks: filteredBearish, bosLines };
+}
+
   return {
     sma, ema, vwap, vwma,
     bollingerBands, donchian, keltner,
     atr, rsi, macd, stochastic, adx, cci, obv, mfi, williamsR,
     supertrend, pivotPoints, volumeBars,
-    ichimoku, parabolicSAR, cmf, momentum, stochRSI,sdZonesAutoFib,
+    ichimoku, parabolicSAR, cmf, momentum, stochRSI, sdZonesAutoFib, orderBlocks,
   };
 })();
 

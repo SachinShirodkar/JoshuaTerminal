@@ -128,6 +128,26 @@
 
 </div>
 
+<!-- ── Indicator flyout (mirrors index.html) ── -->
+<div class="indicator-flyout" id="indicator-flyout">
+  <div class="flyout-header">
+    <span class="flyout-title">INDICATORS</span>
+    <button class="flyout-close" id="flyout-close">✕</button>
+  </div>
+  <div class="flyout-body" id="flyout-body"></div>
+</div>
+
+<!-- ── Drawing tools flyout (mirrors index.html) ── -->
+<div class="drawing-flyout" id="drawing-flyout">
+  <div class="flyout-header">
+    <span class="flyout-title">DRAWING TOOLS</span>
+    <button class="flyout-close" id="draw-flyout-close">✕</button>
+  </div>
+  <div class="flyout-body" id="draw-flyout-body"></div>
+</div>
+
+<div class="flyout-backdrop" id="flyout-backdrop"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="/static/js/indicators.js"></script>
@@ -199,7 +219,31 @@
     setDot('pop-dot-yf', '');
     setDot('pop-dot-oanda', '');
   });
-  socket.on('oanda_price', () => setDot('pop-dot-oanda', 'live'));
+
+  // ── Live price routing → pane.onPriceUpdate() ──────────────────────────────
+  // (mirrors app.js socket handlers — popout doesn't load app.js)
+  const _norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+
+  socket.on('hl_mids', data => {
+    const map = {};
+    (data.updates || []).forEach(t => { map[t.symbol] = t; });
+    if (pane && pane.source === 'hyperliquid' && map[pane.symbol]) {
+      pane.onPriceUpdate(map[pane.symbol]);
+    }
+  });
+
+  socket.on('oanda_price', data => {
+    setDot('pop-dot-oanda', 'live');
+    if (pane && pane.source !== 'hyperliquid' && _norm(pane.symbol) === _norm(data.symbol)) {
+      pane.onPriceUpdate(data);
+    }
+  });
+
+  socket.on('yf_price', data => {
+    if (pane && pane.source !== 'hyperliquid' && _norm(pane.symbol) === _norm(data.symbol)) {
+      pane.onPriceUpdate(data);
+    }
+  });
 
   // ── Symbol lists (needed by ChartPane) ─────────────────────────────────────
   const symbolLists = { forex: [], crypto: [] };
@@ -223,6 +267,135 @@
 
   // ── Alert permission ────────────────────────────────────────────────────────
   if (window.AlertEngine) AlertEngine.requestPermission();
+
+  // ── Flyout helpers ──────────────────────────────────────────────────────────
+  function _syncBackdrop() {
+    const indOpen  = document.getElementById('indicator-flyout').classList.contains('open');
+    const drawOpen = document.getElementById('drawing-flyout').classList.contains('open');
+    document.getElementById('flyout-backdrop').classList.toggle('open', indOpen || drawOpen);
+  }
+  function closeFlyout() {
+    document.getElementById('indicator-flyout').classList.remove('open');
+    _syncBackdrop();
+  }
+  function closeDrawFlyout() {
+    document.getElementById('drawing-flyout').classList.remove('open');
+    _syncBackdrop();
+  }
+
+  document.getElementById('flyout-close').addEventListener('click', closeFlyout);
+  document.getElementById('draw-flyout-close').addEventListener('click', closeDrawFlyout);
+  document.getElementById('flyout-backdrop').addEventListener('click', () => { closeFlyout(); closeDrawFlyout(); });
+  document.addEventListener('drawing-tool-exited', () => closeDrawFlyout());
+
+  // ── Indicator flyout ────────────────────────────────────────────────────────
+  function openFlyout() {
+    const body = document.getElementById('flyout-body');
+    body.innerHTML = '';
+    window.INDICATOR_DEFS.forEach(group => {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'indicator-group';
+      const lbl = document.createElement('div');
+      lbl.className = 'indicator-group-label';
+      lbl.textContent = group.group;
+      groupEl.appendChild(lbl);
+      group.items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'indicator-row';
+        const cb  = document.createElement('div');
+        cb.className = 'indicator-checkbox' + (pane.activeIndicators.has(item.id) ? ' checked' : '');
+        const dot = document.createElement('div');
+        dot.className = 'indicator-color-dot';
+        dot.style.background = item.color;
+        const nm = document.createElement('div');
+        nm.className = 'indicator-name';
+        nm.textContent = item.label;
+        row.appendChild(cb); row.appendChild(dot); row.appendChild(nm);
+        row.addEventListener('click', () => {
+          cb.className = 'indicator-checkbox' + (pane.toggleIndicator(item.id) ? ' checked' : '');
+        });
+        groupEl.appendChild(row);
+      });
+      body.appendChild(groupEl);
+    });
+    document.getElementById('indicator-flyout').classList.add('open');
+    _syncBackdrop();
+  }
+
+  // ── Drawing flyout ──────────────────────────────────────────────────────────
+  const DRAW_TOOLS = [
+    { tool: 'fib',   label: 'Fibonacci',
+      svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="13" x2="13" y2="1" stroke="currentColor" stroke-width="1.5"/><line x1="1" y1="9" x2="13" y2="9" stroke="currentColor" stroke-width="1" stroke-dasharray="2,1"/><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1" stroke-dasharray="2,1"/><line x1="1" y1="5" x2="13" y2="5" stroke="currentColor" stroke-width="1" stroke-dasharray="2,1"/></svg>' },
+    { tool: 'long',  label: 'Long',  color: '#00e676',
+      svg: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="1,9 6,3 11,9" stroke="#00e676" stroke-width="1.8" fill="none"/></svg>' },
+    { tool: 'short', label: 'Short', color: '#ff3d5a',
+      svg: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="1,3 6,9 11,3" stroke="#ff3d5a" stroke-width="1.8" fill="none"/></svg>' },
+    { tool: 'trend', label: 'Trendline',
+      svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="13" x2="13" y2="1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="1.5" cy="12.5" r="1.5" fill="currentColor"/><circle cx="12.5" cy="1.5" r="1.5" fill="currentColor"/></svg>' },
+    { tool: 'hline', label: 'Horizontal Line',
+      svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="1.5" cy="7" r="1.5" fill="currentColor"/><circle cx="12.5" cy="7" r="1.5" fill="currentColor"/></svg>' },
+    { tool: 'vline', label: 'Vertical Line',
+      svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="1.5" r="1.5" fill="currentColor"/><circle cx="7" cy="12.5" r="1.5" fill="currentColor"/></svg>' },
+  ];
+
+  function openDrawFlyout() {
+    closeFlyout();
+    const body = document.getElementById('draw-flyout-body');
+    body.innerHTML = '';
+
+    const toolGroup = document.createElement('div');
+    toolGroup.className = 'draw-tool-group';
+    const toolLabel = document.createElement('div');
+    toolLabel.className = 'indicator-group-label';
+    toolLabel.textContent = 'TOOLS';
+    toolGroup.appendChild(toolLabel);
+
+    DRAW_TOOLS.forEach(def => {
+      const row = document.createElement('div');
+      row.className = 'draw-tool-row';
+      const isActive = pane.drawingMode === def.tool;
+      row.innerHTML = `
+        <button class="draw-flyout-btn ${isActive ? 'active' : ''}" data-tool="${def.tool}">
+          ${def.svg}<span>${def.label}</span>
+        </button>`;
+      const btn = row.querySelector('.draw-flyout-btn');
+      if (def.color) btn.style.setProperty('--tool-color', def.color);
+      btn.addEventListener('click', () => {
+        pane.setDrawingTool(def.tool);
+        body.querySelectorAll('.draw-flyout-btn').forEach(b => {
+          const t = b.dataset.tool;
+          const active = pane.drawingMode === t;
+          b.classList.toggle('active', active);
+          const d = DRAW_TOOLS.find(x => x.tool === t);
+          b.style.color = (active && d && d.color) ? d.color : '';
+        });
+      });
+      toolGroup.appendChild(row);
+    });
+    body.appendChild(toolGroup);
+
+    const clearGroup = document.createElement('div');
+    clearGroup.className = 'draw-tool-group';
+    const clearLabel = document.createElement('div');
+    clearLabel.className = 'indicator-group-label';
+    clearLabel.textContent = 'ACTIONS';
+    const clearRow = document.createElement('div');
+    clearRow.className = 'draw-tool-row';
+    clearRow.innerHTML = '<button class="draw-flyout-clear">&#x2715; Clear All Drawings</button>';
+    clearRow.querySelector('.draw-flyout-clear').addEventListener('click', () => pane.clearAllDrawings());
+    clearGroup.appendChild(clearLabel);
+    clearGroup.appendChild(clearRow);
+    body.appendChild(clearGroup);
+
+    document.getElementById('drawing-flyout').classList.add('open');
+    _syncBackdrop();
+  }
+
+  // Wire toolbar buttons on the pane element
+  paneEl.addEventListener('click', e => {
+    if (e.target.closest('.btn-indicators')) openFlyout();
+    if (e.target.closest('.btn-draw-open')) openDrawFlyout();
+  });
 
 })();
 </script>
