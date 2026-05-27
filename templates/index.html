@@ -43,6 +43,7 @@
   <div class="topbar-right">
     <button class="btn-icon" id="btn-new-window" title="Open full terminal on second monitor">⧉</button>
     <button class="btn-icon" id="btn-theme" title="Toggle theme">☾</button>
+    <button class="btn-icon" id="btn-timezone" title="Chart timezone">🕐</button>
     <button class="btn-icon" id="btn-saved-states" title="Manage Saved States">💾</button>
     <button class="btn-icon" id="btn-fullscreen" title="Fullscreen">⛶</button>
     <div class="session-indicator">
@@ -56,6 +57,17 @@
 <main class="chart-grid" id="chart-grid">
   <!-- Panes injected by JS -->
 </main>
+
+<!-- ═══════════════════════════════════════════ TIMEZONE PICKER -->
+<div class="tz-picker" id="tz-picker">
+  <div class="flyout-header">
+    <span class="flyout-title">CHART TIMEZONE</span>
+    <button class="flyout-close" id="tz-picker-close">✕</button>
+  </div>
+  <div class="flyout-body">
+    <div class="tz-option-list" id="tz-option-list"></div>
+  </div>
+</div>
 
 <!-- ═══════════════════════════════════════════ INDICATOR PANEL (shared flyout) -->
 <div class="indicator-flyout" id="indicator-flyout">

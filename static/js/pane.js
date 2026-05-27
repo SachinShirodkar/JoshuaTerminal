@@ -220,9 +220,13 @@ class ChartPane {
         scaleMargins:  { top: 0.06, bottom: 0.06 },
       },
       timeScale: {
-        borderColor:    '#1e2535',
-        timeVisible:    true,
-        secondsVisible: false,
+        borderColor:       '#1e2535',
+        timeVisible:       true,
+        secondsVisible:    false,
+        tickMarkFormatter: this._makeTickMarkFormatter(localStorage.getItem('chartTimezone') || 'UTC'),
+      },
+      localization: {
+        timeFormatter: this._makeTzFormatter(localStorage.getItem('chartTimezone') || 'UTC'),
       },
       handleScale: { mouseWheel: true, pinch: true },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
@@ -582,7 +586,10 @@ class ChartPane {
     void ticker.offsetWidth;   // force reflow so animation restarts
     ticker.classList.add(isUp ? 'flash-up' : 'flash-down');
 
-    timeEl.textContent = new Date().toTimeString().slice(0,8);
+    const _tz = localStorage.getItem('chartTimezone') || 'UTC';
+    timeEl.textContent = new Date().toLocaleString('en-US', {
+      timeZone: _tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
   }
 
   // ── Indicators ───────────────────────────────────────
@@ -2972,6 +2979,104 @@ class ChartPane {
         });
       }
     });
+  }
+
+  // ── applyTimezone ─────────────────────────────────────────────────────────────
+  applyTimezone(tz) {
+    const tickFmt  = this._makeTickMarkFormatter(tz);
+    const timeFmt  = this._makeTzFormatter(tz);
+    if (this.chart) {
+      this.chart.applyOptions({ localization: { timeFormatter: timeFmt } });
+      this.chart.timeScale().applyOptions({ tickMarkFormatter: tickFmt });
+    }
+    Object.values(this.subPanes).forEach(sp => {
+      if (sp.chart) {
+        sp.chart.applyOptions({ localization: { timeFormatter: timeFmt } });
+        sp.chart.timeScale().applyOptions({ tickMarkFormatter: tickFmt });
+      }
+    });
+  }
+
+  _makeTzFormatter(tz) {
+    return timestamp => {
+      const date = new Date(timestamp * 1000);
+      try {
+        return date.toLocaleString('en-US', {
+          timeZone:  tz === 'UTC' ? 'UTC' : tz,
+          month:     '2-digit',
+          day:       '2-digit',
+          hour:      '2-digit',
+          minute:    '2-digit',
+          hour12:    false,
+        }).replace(',', '');
+      } catch(e) {
+        // Fallback to UTC if tz string is invalid
+        return date.toUTCString().slice(5, 22);
+      }
+    };
+  }
+
+  _makeTickMarkFormatter(tz) {
+    // Controls the bottom axis tick labels.
+    // TickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
+    return (timestamp, tickMarkType, locale) => {
+      const date = new Date(timestamp * 1000);
+      const tzOpts = { timeZone: tz || 'UTC' };
+      try {
+        if (tickMarkType === 0) {
+          // Year
+          return date.toLocaleString('en-US', { ...tzOpts, year: 'numeric' });
+        } else if (tickMarkType === 1) {
+          // Month
+          return date.toLocaleString('en-US', { ...tzOpts, month: 'short' });
+        } else if (tickMarkType === 2) {
+          // Day of month
+          return date.toLocaleString('en-US', { ...tzOpts, month: 'short', day: 'numeric' });
+        } else {
+          // Time (type 3) or TimeWithSeconds (type 4)
+          return date.toLocaleString('en-US', {
+            ...tzOpts, hour: '2-digit', minute: '2-digit', hour12: false,
+          });
+        }
+      } catch(e) {
+        return date.toUTCString().slice(17, 22);
+      }
+    };
+  }
+
+  // ── Timezone offset helpers ──────────────────────────────────────────────────
+  // Returns the UTC offset in seconds for a given tz at the current moment.
+  // We compute it by comparing what toLocaleString gives us vs UTC.
+  _tzOffsetSec(tz) {
+    // Returns the net seconds to ADD to a UTC timestamp so the browser's
+    // local Date rendering displays the correct wall-clock time for `tz`.
+    //
+    // Formula: shift = targetUtcOffset - browserUtcOffset
+    // because: displayedHour = (utcTimestamp + shift) rendered in browser local time
+    //        = utcTimestamp + shift + browserOffset  (in UTC seconds)
+    // We want that to equal utcTimestamp + targetOffset, so shift = targetOffset - browserOffset.
+    try {
+      const now = new Date();
+      // Target tz offset: difference between that tz's wall clock and UTC, in ms
+      const utcMs   = now.getTime();
+      const tzStr   = now.toLocaleString('en-US', { timeZone: tz || 'UTC', hour12: false,
+        year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      const targetOffsetSec = Math.round((new Date(tzStr).getTime() - utcMs) / 1000);
+
+      // Browser local offset in seconds (getTimezoneOffset returns minutes, sign inverted)
+      const browserOffsetSec = -now.getTimezoneOffset() * 60;
+
+      return targetOffsetSec - browserOffsetSec;
+    } catch(e) { return 0; }
+  }
+
+  // Shift raw UTC candle timestamps by the timezone offset so LightweightCharts
+  // axis labels (which always treat timestamps as "local wall-clock") show the
+  // correct time for the chosen timezone.
+  _shiftCandles(candles, offsetSec) {
+    if (offsetSec === 0) return candles;
+    return candles.map(c => ({ ...c, time: c.time + offsetSec }));
   }
 
   destroy() {

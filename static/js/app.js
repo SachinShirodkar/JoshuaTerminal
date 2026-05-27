@@ -243,6 +243,59 @@ const App = (() => {
     });
     applyTheme(localStorage.getItem('theme') || 'dark');
 
+  // ── Timezone picker ──────────────────────────────────
+  const TZ_OPTIONS = [
+    { label: 'UTC',              tz: 'UTC' },
+    { label: 'New York (ET)',    tz: 'America/New_York' },
+    { label: 'London (GMT/BST)', tz: 'Europe/London' },
+    { label: 'Frankfurt (CET)',  tz: 'Europe/Berlin' },
+    { label: 'Dubai (GST)',      tz: 'Asia/Dubai' },
+    { label: 'Singapore (SGT)',  tz: 'Asia/Singapore' },
+    { label: 'Tokyo (JST)',      tz: 'Asia/Tokyo' },
+    { label: 'Sydney (AEDT)',    tz: 'Australia/Sydney' },
+  ];
+
+  const applyTimezone = tz => {
+    localStorage.setItem('chartTimezone', tz);
+    panes.forEach(p => p.applyTimezone(tz));
+    // Update button label to show active TZ abbreviation
+    const match = TZ_OPTIONS.find(o => o.tz === tz);
+    document.getElementById('btn-timezone').title = `Chart timezone: ${match ? match.label : tz}`;
+    // Refresh active state in picker list
+    document.querySelectorAll('.tz-option').forEach(el => {
+      el.classList.toggle('active', el.dataset.tz === tz);
+    });
+  };
+
+  const tzPicker  = document.getElementById('tz-picker');
+  const tzList    = document.getElementById('tz-option-list');
+  const savedTz   = localStorage.getItem('chartTimezone') || 'UTC';
+
+  TZ_OPTIONS.forEach(opt => {
+    const el = document.createElement('div');
+    el.className = 'tz-option' + (opt.tz === savedTz ? ' active' : '');
+    el.dataset.tz = opt.tz;
+    el.textContent = opt.label;
+    el.addEventListener('click', () => {
+      applyTimezone(opt.tz);
+      tzPicker.classList.remove('open');
+      document.getElementById('flyout-backdrop').classList.remove('open');
+    });
+    tzList.appendChild(el);
+  });
+
+  document.getElementById('btn-timezone').addEventListener('click', () => {
+    tzPicker.classList.toggle('open');
+    document.getElementById('flyout-backdrop').classList.toggle('open', tzPicker.classList.contains('open'));
+  });
+  document.getElementById('tz-picker-close').addEventListener('click', () => {
+    tzPicker.classList.remove('open');
+    document.getElementById('flyout-backdrop').classList.remove('open');
+  });
+
+  // Apply saved TZ on load (panes exist by now)
+  if (savedTz !== 'UTC') applyTimezone(savedTz);
+
     // Auto-close drawing flyout when tool completes
     document.addEventListener('drawing-tool-exited', () => closeDrawFlyout());
 
