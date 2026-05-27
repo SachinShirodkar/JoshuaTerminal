@@ -474,8 +474,50 @@ class ChartPane {
     });
 
     this.candleSeries.setData(this.candles);
-    this.chart.timeScale().fitContent();
+
+    // Restore saved barSpacing for this symbol, or fitContent for first load
+    const savedSpacing = this._loadBarSpacing();
+    if (savedSpacing) {
+      this.chart.timeScale().applyOptions({ barSpacing: savedSpacing });
+      // Scroll so the last candle has a comfortable right-side offset
+      this._applyRightOffset();
+    } else {
+      this.chart.timeScale().fitContent();
+      this._applyRightOffset();
+    }
+
     if (last) this._updateTicker(last.close, last.close, 0, 0, 'up');
+  }
+
+  // Apply a default right-side gap so the last candle isn't flush against the price scale
+  _applyRightOffset(bars = 15) {
+    try {
+      const ts    = this.chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) return;
+      const len = this.candles.length;
+      ts.setVisibleLogicalRange({
+        from: range.from,
+        to:   len - 1 + bars,
+      });
+    } catch(e) {}
+  }
+
+  // Persist barSpacing to localStorage keyed by symbol
+  _saveBarSpacing() {
+    try {
+      const spacing = this.chart.timeScale().options().barSpacing;
+      if (spacing && spacing > 0) {
+        localStorage.setItem(`barSpacing:${this.symbol}`, spacing);
+      }
+    } catch(e) {}
+  }
+
+  _loadBarSpacing() {
+    try {
+      const v = parseFloat(localStorage.getItem(`barSpacing:${this.symbol}`));
+      return isNaN(v) ? null : v;
+    } catch(e) { return null; }
   }
 
   // ── Live subscriptions ───────────────────────────────
@@ -968,6 +1010,8 @@ class ChartPane {
 
     // Redraw trendlines on scroll/zoom
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._trendRender());
+    // Persist bar spacing whenever the user zooms/scrolls
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._saveBarSpacing());
     this.chart.subscribeCrosshairMove(() => this._trendRender());
     // ── Chart-level events for drawing tools and trendline interaction ────────
     chartEl.addEventListener('mousedown', e => this._onDrawMouseDown(e));
