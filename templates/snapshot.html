@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Snapshot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/css/style.css" />
+<style>
+  /* ── Snapshot-specific overrides ──────────────────────────────────────────── */
+  html, body {
+    margin: 0; padding: 0;
+    width: 1600px; height: 900px;
+    overflow: hidden;
+    background: #0a0c0f;
+  }
+
+  /* Full-bleed chart — no toolbar, no ticker, just canvas */
+  #snapshot-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Slim label bar at top — symbol + interval + timestamp */
+  #snapshot-label {
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 12px;
+    background: #0f1217;
+    border-bottom: 1px solid #1e2535;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #7a8599;
+  }
+  #snapshot-label .sym  { color: #d4dbe8; font-weight: 600; font-size: 13px; }
+  #snapshot-label .tf   { color: #00c8ff; }
+  #snapshot-label .src  { color: #454f63; }
+  #snapshot-label .ts   { margin-left: auto; font-size: 10px; }
+
+  /* Chart fills the remaining space */
+  #snapshot-chart-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+  /* Override pane CSS so there's no toolbar rendered */
+  #snapshot-chart-wrap .pane-toolbar,
+  #snapshot-chart-wrap .pane-ticker {
+    display: none !important;
+  }
+  #snapshot-chart-wrap .pane {
+    position: absolute;
+    inset: 0;
+    border: none;
+    border-radius: 0;
+  }
+  #snapshot-chart-wrap .pane-chart-wrap {
+    /* pane-chart-wrap normally fills below the ticker — override to fill everything */
+    height: 100% !important;
+  }
+
+  /* Loading / error overlay */
+  #snapshot-status {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10,12,15,0.85);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #7a8599;
+    letter-spacing: 1px;
+  }
+  #snapshot-status.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="snapshot-wrap">
+  <div id="snapshot-label">
+    <span class="sym" id="lbl-symbol">—</span>
+    <span class="tf"  id="lbl-tf">—</span>
+    <span class="src" id="lbl-src">—</span>
+    <span class="ts"  id="lbl-ts">—</span>
+  </div>
+  <div id="snapshot-chart-wrap"></div>
+</div>
+
+<div id="snapshot-status">LOADING</div>
+
+<!-- No socket.io — snapshots don't need live prices -->
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/static/js/indicators.js"></script>
+<script src="/static/js/state_store.js"></script>
+<script src="/static/js/alert_engine.js"></script>
+<script src="/static/js/pane.js"></script>
+
+<script>
+(function () {
+  // ── Read URL params ──────────────────────────────────────────────────────────
+  const params   = new URLSearchParams(location.search);
+  const symbol   = (params.get('symbol')   || 'EUR/USD').toUpperCase();
+  const interval = params.get('interval')  || '4h';
+  const source   = params.get('source')    || 'oanda';
+  const daysBack = parseInt(params.get('days') || '0');  // 0 = let fitContent decide
+
+  // ── Populate label bar ───────────────────────────────────────────────────────
+  document.getElementById('lbl-symbol').textContent = symbol;
+  document.getElementById('lbl-tf').textContent     = interval.toUpperCase();
+  document.getElementById('lbl-src').textContent    = source.toUpperCase();
+  document.getElementById('lbl-ts').textContent     = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  document.title = `${symbol} ${interval} · Snapshot`;
+
+  // ── Apply dark theme ─────────────────────────────────────────────────────────
+  document.documentElement.setAttribute('data-theme', 'dark');
+
+  // ── Inject saved state into localStorage ─────────────────────────────────────
+  // Playwright pre-populates window.__SNAPSHOT_STATE__ before the page loads.
+  // This block runs synchronously before ChartPane initialises so that
+  // StateStore.loadDrawings() / loadIndicators() see the correct data.
+  if (window.__SNAPSHOT_STATE__) {
+    try {
+      const state = window.__SNAPSHOT_STATE__;
+      // StateStore key format: cs:EURUSD (strips slashes, upper-cases)
+      const key   = 'cs:' + symbol.replace(/[^A-Z0-9]/g, '');
+      localStorage.setItem(key, JSON.stringify(state));
+      console.log('[Snapshot] State injected for', key,
+        '— drawings:', Object.values(state.drawings || {}).flat().length,
+        'indicators:', Object.values(state.indicators || {}).flat().length);
+    } catch(e) {
+      console.warn('[Snapshot] State injection failed:', e);
+    }
+  } else {
+    console.log('[Snapshot] No __SNAPSHOT_STATE__ — rendering without saved drawings');
+  }
+
+  // ── Stub out socket (ChartPane expects it) ────────────────────────────────────
+  const fakeSocket = {
+    emit: () => {},
+    on:   () => {},
+    off:  () => {},
+    connected: false,
+  };
+
+  // ── Symbol lists (needed by ChartPane constructor) ────────────────────────────
+  const symbolLists = { forex: [], crypto: [] };
+
+  // ── Mount pane ────────────────────────────────────────────────────────────────
+  const wrap   = document.getElementById('snapshot-chart-wrap');
+  const paneEl = document.createElement('div');
+  paneEl.className = 'pane';
+  wrap.appendChild(paneEl);
+
+  const pane = new ChartPane(0, paneEl, fakeSocket, symbolLists, { source, symbol, interval });
+  window._snapPane = pane;
+
+  // ── Wait for chart + data ready, then set view and signal done ────────────────
+  // We poll until candles are loaded, then apply the correct visible range
+  // and signal Playwright that the screenshot can be taken.
+  let _readySignalled = false;
+  const STATUS = document.getElementById('snapshot-status');
+
+  function _signalReady() {
+    if (_readySignalled) return;
+    _readySignalled = true;
+    STATUS.classList.add('hidden');
+    window.__SNAPSHOT_READY__ = true;
+    console.log('[Snapshot] __SNAPSHOT_READY__ = true');
+  }
+
+  // Apply right-side offset using logical bar indices — reliable across all LWC versions.
+  // MIN_OFFSET: at least 8 bars of breathing room on the right.
+  const MIN_OFFSET = 8;
+
+  function _setLogicalOffset(ts, fromBar, toBar) {
+    // toBar is the last candle index; we push the right edge out by MIN_OFFSET bars.
+    try {
+      ts.setVisibleLogicalRange({ from: fromBar, to: toBar + MIN_OFFSET });
+    } catch(e) {
+      console.warn('[Snapshot] setVisibleLogicalRange failed:', e);
+    }
+  }
+
+  function _applyViewAndSignal() {
+    try {
+      const pane = window._snapPane;
+      if (!pane || !pane.chart || !pane.candles || pane.candles.length === 0) return false;
+
+      const ts      = pane.chart.timeScale();
+      const candles = pane.candles;
+      const count   = candles.length;
+
+      if (daysBack > 0) {
+        // Find the bar index that corresponds to daysBack ago
+        const nowSec  = Math.floor(Date.now() / 1000);
+        const fromSec = nowSec - (daysBack * 86400);
+
+        // Binary search for the first candle >= fromSec
+        let lo = 0, hi = count - 1, fromIdx = 0;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (candles[mid].time >= fromSec) { fromIdx = mid; hi = mid - 1; }
+          else lo = mid + 1;
+        }
+
+        // Set the range in logical bar space — guaranteed to include the offset
+        _setLogicalOffset(ts, fromIdx, count - 1);
+      } else {
+        // Fit all content first, then nudge right edge out
+        ts.fitContent();
+        // fitContent is synchronous in LWC but the layout pass isn't — wait one frame
+        requestAnimationFrame(() => {
+          const range = ts.getVisibleLogicalRange();
+          if (range) _setLogicalOffset(ts, range.from, count - 1);
+        });
+      }
+
+      // Wait for the layout + canvas overlays to finish painting, then signal ready.
+      // Two nested rAFs + 300ms covers: LWC render, trendline canvas, S/D canvas.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(_signalReady, 300);
+      }));
+
+      return true;
+    } catch(e) {
+      console.warn('[Snapshot] _applyViewAndSignal error:', e);
+      return false;
+    }
+  }
+
+  // Poll until candles are loaded (max 30s)
+  let _attempts = 0;
+  const _MAX    = 300; // 300 × 100ms = 30s
+
+  function _poll() {
+    _attempts++;
+    if (_attempts > _MAX) {
+      console.error('[Snapshot] Timed out waiting for candles');
+      STATUS.textContent = 'TIMEOUT';
+      _signalReady();
+      return;
+    }
+    const pane = window._snapPane;
+    if (pane && pane.candles && pane.candles.length > 0) {
+      // 500ms settle — indicators and canvas overlays need time after candle render
+      setTimeout(() => {
+        if (!_applyViewAndSignal()) {
+          setTimeout(_signalReady, 500);
+        }
+      }, 500);
+    } else {
+      setTimeout(_poll, 100);
+    }
+  }
+
+  _poll();
+
+})();
+</script>
+</body>
+</html>
