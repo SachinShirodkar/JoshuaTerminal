@@ -105,6 +105,7 @@ class ChartPane {
     this._posIdCounter    = 0;
     this._posPreview      = null;   // { side, entryPrice, slPrice, tpPrice } preview
     this._posCanvas       = null;   // shared canvas for block rendering
+    this._drawingsRestored = false; // guard against duplicate restore on interval switch
     this._sdCanvas        = null;   // canvas for S/D zones & fib overlay
     this._sdData          = null;   // { supplyZones, demandZones, fibLevels }
     this._obCanvas        = null;   // canvas for Order Blocks overlay
@@ -410,6 +411,7 @@ class ChartPane {
     this._hlineClearAll();
     this._vlineClearAll();
     this._isDirty = false;
+    this._drawingsRestored = false;
     this.symbol = sym.toUpperCase();
     input.value = this.symbol;
     this.container.querySelector('.ticker-symbol').textContent = this.symbol;
@@ -1750,6 +1752,7 @@ class ChartPane {
     const tpPrice  = entryPrice + (entryPrice - slPrice);
     const posId    = ++this._posIdCounter;
     const pos = { id: posId, side, entryPrice, slPrice, tpPrice,
+                  locked: false,
                   _dragging: null,
                   // saved calc values persist across panel rebuilds
                   _calcAcct: 10000, _calcRisk: 1, _calcLotSz: 100000 };
@@ -1771,6 +1774,11 @@ class ChartPane {
       if (this.drawingMode) return;
       const pos = this._positions.find(p => p.id === posId);
       if (!pos) return;
+      // Don't drag if locked
+      if (pos.locked) return;
+      // Don't drag if the panel isn't open — a click with no panel showing
+      // is a request to reopen it, not to move the position
+      if (!this._getPosPanel(posId)) return;
       const rect = chartEl.getBoundingClientRect();
       const my = e.clientY - rect.top;
       const tol = 10;
@@ -1830,7 +1838,7 @@ class ChartPane {
   // ── Position info panel (collapsible) ────────────────────
   _getPosPanel(posId) { return document.getElementById(`pos-panel-${posId}`); }
 
-  _showPosPanel(posId) {
+  _showPosPanel(posId, startCollapsed = false) {
     const pos = this._positions.find(p => p.id === posId);
     if (!pos) return;
     const chartEl = document.getElementById(`pane-chart-${this.id}`);
@@ -1861,6 +1869,9 @@ class ChartPane {
           ${isLong ? '▲ LONG' : '▼ SHORT'}
         </span>
         <span class="pos-entry-label">@ <span class="pos-entry-val">${pos.entryPrice.toFixed(dec)}</span></span>
+        <button class="pos-lock-btn ${pos.locked ? 'locked' : ''}" title="${pos.locked ? 'Unlock position' : 'Lock position'}">
+          ${pos.locked ? '🔒' : '🔓'}
+        </button>
         <button class="pos-collapse-btn" title="Collapse / Expand">⊟</button>
         <button class="pos-close-btn">✕</button>
       </div>
@@ -1928,10 +1939,33 @@ class ChartPane {
     // Collapse toggle
     const collapsible = panel.querySelector('.pos-panel-collapsible');
     const colBtn      = panel.querySelector('.pos-collapse-btn');
+
+    // Start collapsed if restoring from save
+    if (startCollapsed) {
+      collapsible.classList.add('collapsed');
+      colBtn.textContent = '⊞';
+    }
+
     colBtn.onclick = () => {
       const collapsed = collapsible.classList.toggle('collapsed');
       colBtn.textContent = collapsed ? '⊞' : '⊟';
     };
+
+    // Lock toggle
+    const lockBtn = panel.querySelector('.pos-lock-btn');
+    lockBtn.onclick = () => {
+      pos.locked = !pos.locked;
+      lockBtn.textContent = pos.locked ? '🔒' : '🔓';
+      lockBtn.title = pos.locked ? 'Unlock position' : 'Lock position';
+      lockBtn.classList.toggle('locked', pos.locked);
+      // Dim the panel border to signal locked state
+      panel.querySelector('.pos-panel-header').style.opacity = pos.locked ? '0.65' : '1';
+      this.markDirty();
+    };
+    // Apply initial locked visual
+    if (pos.locked) {
+      panel.querySelector('.pos-panel-header').style.opacity = '0.65';
+    }
 
     // Close
     panel.querySelector('.pos-close-btn').onclick = () => this._removePosition(posId);
@@ -2040,7 +2074,11 @@ class ChartPane {
     const pos = this._posAtPrice(pixelY);
     if (!pos) return false;
     const existing = this._getPosPanel(pos.id);
-    if (!existing) this._showPosPanel(pos.id);
+    // Rebuild if panel is missing OR is stale (pre-lock-button code)
+    if (!existing || !existing.querySelector('.pos-lock-btn')) {
+      if (existing) existing.remove();
+      this._showPosPanel(pos.id);
+    }
     return true;
   }
 
@@ -2887,6 +2925,10 @@ class ChartPane {
         entryPrice: p.entryPrice,
         slPrice:    p.slPrice,
         tpPrice:    p.tpPrice,
+        locked:     p.locked     || false,
+        _calcAcct:  p._calcAcct  || 10000,
+        _calcRisk:  p._calcRisk  || 1,
+        _calcLotSz: p._calcLotSz || 100000,
       })),
     };
 
@@ -2946,6 +2988,12 @@ class ChartPane {
       this.fibLevels = savedLevels;
     }
 
+    // Drawings are shared across intervals — only restore once per symbol load.
+    // On interval switches _loadData fires again but drawings are already in memory;
+    // restoring again would duplicate every position, fib, trendline, etc.
+    if (this._drawingsRestored) return;
+    this._drawingsRestored = true;
+
     // Restore drawings (shared across all intervals for this symbol)
     const drawings = window.StateStore.loadDrawings(this.symbol);
     if (!drawings) return;
@@ -3000,13 +3048,17 @@ class ChartPane {
       entryPrice: saved.entryPrice,
       slPrice:    saved.slPrice,
       tpPrice:    saved.tpPrice,
+      locked:     saved.locked || false,
       _dragging:  null,
-      _calcAcct:  10000, _calcRisk: 1, _calcLotSz: 100000,
+      _calcAcct:  saved._calcAcct  || 10000,
+      _calcRisk:  saved._calcRisk  || 1,
+      _calcLotSz: saved._calcLotSz || 100000,
     };
     this._positions.push(pos);
     this._renderAllPositions();
     this._attachPosDragHandles(posId);
-    // Don't auto-open the panel on restore — too noisy if multiple positions
+    // Restore panel collapsed so it is visible but not intrusive
+    this._showPosPanel(posId, true);
   }
 
   // END STATE PERSISTENCE

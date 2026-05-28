@@ -932,7 +932,8 @@ html, body {
   flex: 1;
 }
 .pos-collapse-btn,
-.pos-close-btn {
+.pos-close-btn,
+.pos-lock-btn {
   background: none; border: none;
   color: var(--text3); font-size: 13px;
   cursor: pointer; padding: 0 2px;
@@ -941,6 +942,8 @@ html, body {
 }
 .pos-collapse-btn:hover { color: var(--accent); }
 .pos-close-btn:hover    { color: var(--red); }
+.pos-lock-btn:hover     { color: var(--text2); }
+.pos-lock-btn.locked    { color: var(--gold); }
 
 /* Collapsible body */
 .pos-panel-collapsible { overflow: hidden; transition: max-height 0.2s ease; max-height: 600px; }
