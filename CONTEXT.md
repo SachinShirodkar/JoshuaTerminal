@@ -1,49 +1,136 @@
 # Joshua Terminal — Claude Context File
-_Last updated: session fixing candle colours, drawing locks, vline panel, position block bounds, state restore deduplication, interval-switch candle alignment, bar spacing per interval, live incomplete candle fetch, price line visibility_
+_Last updated: Snapshot System — Playwright-based headless chart capture replacing TradingView MCP pipeline_
 
 ---
 
 ## Project Name
-**Joshua Terminal** (formerly "Trading Terminal") — a free, self-hosted, multi-chart trading dashboard.
+**Joshua Terminal** (formerly "Trading Terminal") — a free, self-hosted, multi-chart trading dashboard with integrated AI analysis pipeline.
 
 ---
 
 ## Stack
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.10+, Flask, Flask-SocketIO (threading mode), python-dotenv |
+| Backend | Python 3.9+, Flask, Flask-SocketIO (threading mode), python-dotenv |
 | Frontend | Vanilla JS (no framework), Lightweight Charts v4.1.3 |
 | Forex live prices | OANDA v20 REST + HTTP streaming (primary) |
 | Crypto live prices | Hyperliquid WebSocket (allMids) |
 | Forex candles fallback | yfinance (when no OANDA key) |
 | Styling | Plain CSS with CSS variables, JetBrains Mono + Syne fonts |
 | Alerts | Browser Web Notifications API + Telegram Bot API |
+| Snapshot rendering | Playwright (headless Chromium) |
+| AI analysis | Anthropic Claude API (vision) |
 
 ---
 
 ## File Structure
 ```
 joshua_terminal/
-├── app.py                  # Flask backend + SocketIO + OANDA stream + HL WS + alert endpoint
-├── data_source.py          # Pluggable data layer — OANDA v20, yfinance fallback
+├── app.py                    # Flask backend + SocketIO + OANDA stream + HL WS + alert endpoint
+│                             # + registers snapshot_bp + starts HTTP sidecar via init_app()
+├── data_source.py            # Pluggable data layer — OANDA v20, yfinance fallback
+├── snapshot_routes.py        # Snapshot system blueprint — state API + Playwright renderer + cleanup
+├── snapshot_state.json       # Server-side drawing/indicator state (auto-created, gitignore this)
+├── snapshots/                # Output PNGs from Playwright (auto-created, auto-cleaned after 7 days)
 ├── requirements.txt
-├── .env                    # OANDA + Telegram credentials (not committed to git)
-├── .env.example            # Template for .env
-├── Indicators.md           # Log of all Pine Script indicators converted to JS (with notes)
+├── .env                      # All credentials (not committed to git)
+├── .env.example              # Template for .env
+├── Indicators.md             # Log of all Pine Script indicators converted to JS
 ├── templates/
-│   ├── index.html          # Single-page shell — topbar, grid, flyouts, panels, scripts
-│   ├── popout.html         # Standalone chart window for multi-monitor popout
-│   └── pine-converter.html # Pine Script → Joshua Terminal converter tool (standalone, API-key modal)
+│   ├── index.html            # Single-page shell — topbar, grid, flyouts, panels, scripts
+│   ├── popout.html           # Standalone chart window for multi-monitor popout
+│   ├── snapshot.html         # Headless chart page rendered by Playwright for analysis snapshots
+│   └── pine-converter.html   # Pine Script → Joshua Terminal converter tool
 └── static/
     ├── css/
-    │   └── style.css       # All styles — CSS vars, light/dark theme, pane, toolbar, flyouts, panels
+    │   └── style.css         # All styles — CSS vars, light/dark theme, pane, toolbar, flyouts
     └── js/
-        ├── indicators.js   # All indicator maths (client-side, pure functions)
-        ├── state_store.js  # localStorage persistence layer
-        ├── alert_engine.js # Generic alert engine — browser notifications + Telegram
-        ├── pane.js         # ChartPane class — chart, drawings, indicators, state, alerts
-        └── app.js          # Orchestrator — grid, socket, flyouts, notes, layout memory
+        ├── indicators.js     # All indicator maths (client-side, pure functions)
+        ├── state_store.js    # localStorage persistence + server sync (_syncToServer patch)
+        ├── alert_engine.js   # Generic alert engine — browser notifications + Telegram
+        ├── pane.js           # ChartPane class — chart, drawings, indicators, state, alerts
+        └── app.js            # Orchestrator — grid, socket, flyouts, notes, layout memory
+
+# AI Analysis pipeline (separate project, same machine):
+forex_automation/
+├── run_analysis.py           # Main runner — captures charts, calls Claude, saves report, sends Telegram
+├── snapshot_runner.py        # JT snapshot client — drop-in replacement for mcp_client.py
+├── config.py                 # Central config loader from .env
+└── .env                      # ANTHROPIC_API_KEY, PAIRS, TIMEFRAMES, etc.
 ```
+
+---
+
+## Snapshot System — Architecture
+
+### Overview
+Joshua Terminal replaces the TradingView MCP/CDP pipeline with a self-contained headless rendering system. Playwright controls a plain-HTTP sidecar server (wsgiref, random free port) that serves the same Flask app, navigates to `/snapshot`, injects saved drawing state, and screenshots the fully-rendered chart.
+
+### Flow
+```
+snapshot_runner.py
+  → POST /api/snapshot (HTTPS main server)
+    → Flask: _do_snapshot()
+      → reads snapshot_state.json for symbol's drawings/indicators
+      → starts plain-HTTP sidecar (first call only, cached)
+      → Playwright navigates to http://127.0.0.1:<sidecar_port>/snapshot?symbol=...
+      → injects state via page.add_init_script() BEFORE page JS runs
+      → waits for window.__SNAPSHOT_READY__ === true
+      → page.evaluate() applies 8-bar right offset
+      → page.wait_for_timeout(600ms) for canvas overlays to paint
+      → screenshots #snapshot-chart-wrap
+      → saves to snapshots/<SYMBOL>_<interval>_<ts>.png
+      → cleans up PNGs older than SNAPSHOT_KEEP_DAYS (default 7)
+      → returns { ok, file, path, base64, has_saved_state, ... }
+  → snapshot_runner collects base64 images
+  → run_analysis.py sends all images to Claude API with analysis prompt
+  → saves report to reports/ + sends via Telegram
+```
+
+### Why plain-HTTP sidecar
+When Flask runs with SSL (HTTPS/mkcert), Playwright's headless Chromium gets `ERR_CONNECTION_RESET` navigating to `https://localhost` due to self-signed cert handling. The wsgiref sidecar runs plain HTTP on a random free port (`127.0.0.1` only), completely bypassing SSL while serving the identical Flask app.
+
+### State bridge (localStorage → server)
+Playwright runs in an isolated browser profile with empty localStorage. The bridge:
+- **Save path:** `state_store.js` `saveDrawings()` → `localStorage` + fire-and-forget `POST /api/state/save` → `snapshot_state.json`
+- **Load path:** `_do_snapshot()` reads `snapshot_state.json` → `page.add_init_script()` injects `window.__SNAPSHOT_STATE__` → `snapshot.html` writes to `localStorage` before `ChartPane` initialises
+- **Migration:** paste `migrate_state.js` in browser console once to export existing localStorage to server
+
+### snapshot.html
+- No socket, no toolbar, no ticker — pure chart render
+- 1600×900px fixed size
+- Reads `?symbol`, `?interval`, `?source`, `?days` from URL
+- Polls `pane.candles.length > 0` then sets `window.__SNAPSHOT_READY__ = true`
+- Right offset applied by Playwright `page.evaluate()` AFTER ready (avoids race with indicator renders that call `fitContent()`)
+
+### snapshot_routes.py — endpoints
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/state/<symbol>` | GET | Return saved state blob for symbol |
+| `/api/state/save` | POST | Write state blob to snapshot_state.json |
+| `/api/state/list` | GET | List all symbols with saved state |
+| `/api/state/export` | GET | Dump full state file |
+| `/api/snapshot` | POST | Capture one chart, return PNG + base64 |
+| `/api/snapshot/batch` | POST | Capture multiple charts in one call |
+| `/api/snapshot/list` | GET | List all PNG files in snapshots/ |
+| `/snapshots/<file>` | GET | Serve a snapshot PNG |
+| `/snapshot` | GET | The headless chart page (template) |
+
+### Auto-cleanup
+- Default: keep 7 days of PNGs
+- Override: `SNAPSHOT_KEEP_DAYS=3` in `.env` (0 = disable)
+- Runs automatically after each successful capture
+- At 8 charts/run daily ≈ 56 PNGs max on disk
+
+### snapshot_runner.py — key details
+- Drop-in replacement for `mcp_client.fetch_all_charts()`
+- Returns identical `(charts, live_prices)` tuple
+- Auto-detects JT URL: tries HTTPS first, falls back to HTTP, caches result
+- All requests use `verify=False` for self-signed certs
+- Warns clearly if no saved state exists for a symbol (`has_saved_state: False`)
+- Timeframe mapping: `"4H" → "4h"`, `"15" → "15m"` etc.
+- Symbol mapping: `"PEPPERSTONE:EURUSD" → "EUR/USD"`
+- View range: 90 days for 4H, 5 days for 15M (matches original `reset_chart_view()`)
 
 ---
 
@@ -51,189 +138,111 @@ joshua_terminal/
 
 ### Core
 - ✅ Multi-pane grid — 1, 2, 4, 6, 8 panes, each fully independent
-- ✅ Live forex prices via OANDA v20 streaming (HTTP newline-delimited JSON)
+- ✅ Live forex prices via OANDA v20 streaming
 - ✅ Live crypto prices via Hyperliquid WebSocket (allMids)
 - ✅ yfinance polling fallback (5s interval) when no OANDA key
 - ✅ Colour-coded ticker bar with flash-up/flash-down animation
 - ✅ World clock (UTC, NY, London, Tokyo) + market session indicator
-- ✅ Symbol autocomplete dropdown (Majors/Minors/Exotics/Metals/Indices/Crypto groups)
-- ✅ Fullscreen mode
-- ✅ **Dark/light theme toggle** — ☾/☀ button in topbar, persists via localStorage
-- ✅ **Multi-monitor support** — pane popout (⧉ pane toolbar) + full terminal (⧉ topbar)
-- ✅ **Screenshot/export** — 📷 composites all canvas layers, downloads as PNG
-- ✅ **Connection status dots** — HL, YF, OANDA dots in topbar
-- ✅ **Live candle advance** — `onPriceUpdate()` detects bar boundary and opens new candle with correct timestamp
+- ✅ Symbol autocomplete dropdown (Majors/Minors/Exotics/Metals/Indices/Crypto)
+- ✅ Fullscreen mode, dark/light theme toggle, multi-monitor support
+- ✅ Screenshot/export — composites all canvas layers, downloads as PNG
+- ✅ Connection status dots — HL, YF, OANDA
+- ✅ Live candle advance — `onPriceUpdate()` detects bar boundary
+
+### Snapshot / AI Analysis Pipeline
+- ✅ `POST /api/snapshot` — Playwright headless render of full JT chart
+- ✅ `POST /api/state/save` — server-side state persistence bridge
+- ✅ `state_store.js` patched — every SAVE click syncs to `snapshot_state.json`
+- ✅ Plain-HTTP sidecar — bypasses SSL for Playwright regardless of JT HTTPS config
+- ✅ State injection via `page.add_init_script()` — drawings appear in snapshots
+- ✅ Right-side offset (8 bars) applied via `page.evaluate()` post-render
+- ✅ Auto-cleanup of old PNGs (configurable, default 7 days)
+- ✅ `snapshot_runner.py` — HTTPS→HTTP auto-detection, `verify=False`, clear warnings
+- ✅ `migrate_state.js` — one-time browser console export of existing localStorage
 
 ### Candle Colour Configuration
-- ✅ Configurable candle colours — Bull/Bear Fill, Border, Wick (6 pickers in DRAW flyout)
-- ✅ ⊘ transparent toggle on Bull Fill and Bear Fill for hollow/outline candles
-- ✅ Changes apply live to all open panes simultaneously
+- ✅ Configurable — Bull/Bear Fill, Border, Wick (6 pickers in DRAW flyout)
+- ✅ ⊘ transparent toggle on Bull Fill and Bear Fill for hollow candles
 - ✅ Persisted to `localStorage` key `candleColors` (global)
-- ✅ `_defaultCandleColors()` / `_loadCandleColors()` / `applyCandleColors(colors)`
-- ✅ **Price line always visible** — `priceLineVisible: true`, `lastValueVisible: true`, `priceLineColor: '#ffffff'` set explicitly on candleSeries in BOTH `_initChart` and `applyCandleColors`
-- ⚠️ LWC does not accept `'transparent'` — resolved to `'rgba(0,0,0,0)'` before passing to LWC
-- ⚠️ Price line colour is hardcoded white (`#ffffff`) to prevent it inheriting the fill colour (which could be transparent/invisible)
+- ⚠️ LWC does not accept `'transparent'` — resolved to `'rgba(0,0,0,0)'`
 
-### Interval Switch — Candle Alignment (CRITICAL FIX)
-- ✅ **`candleSeries` is recreated on every `_renderCandles()` call**
-- ✅ This fixes LWC v4 internal time scale confusion when switching between intervals (e.g. 15m → 4h)
-- ✅ Without recreation, LWC partially retains the previous interval's bar spacing model, causing visible gaps between candles on the new interval
-- ✅ New series is created with identical options (colours, price line) from `_loadCandleColors()`
-- ✅ All canvas overlays (SD zones, OB, trendlines, positions) reference `this.candleSeries` and automatically use the new series instance
+### Interval Switch — Candle Alignment (CRITICAL)
+- ✅ `candleSeries` is recreated on every `_renderCandles()` call
+- ✅ Fixes LWC v4 bar spacing confusion when switching intervals
+- ⚠️ Do NOT "optimise" this away — the recreation is intentional
 
-### Bar Spacing Persistence (UPDATED)
-- ✅ **Bar spacing keyed per symbol + interval** — `localStorage` key `barSpacing:SYMBOL:INTERVAL`
-- ✅ Previously was `barSpacing:SYMBOL` (shared across all intervals) — caused zoom bleedover between timeframes
-- ✅ Each timeframe now has its own independent zoom level
-- ✅ First visit to any symbol+interval uses `fitContent()` then saves on first scroll
-- ✅ `_saveBarSpacing()` / `_loadBarSpacing()` both use `this.symbol` + `this.interval` in the key
-- ⚠️ Old `barSpacing:SYMBOL` keys in localStorage are orphaned — harmlessly ignored
-
-### Right-Side Offset (UPDATED)
-- ✅ `_applyRightOffset()` now uses **proportional offset** — 8% of visible range (min 3, max 30 bars)
-- ✅ Previously fixed at 15 bars — caused huge gaps on zoomed-out higher timeframes
-- ✅ Called via `requestAnimationFrame()` after `fitContent()` or `applyOptions(barSpacing)` to allow LWC layout pass to complete before reading range
-- ✅ Without `requestAnimationFrame`, `getVisibleLogicalRange()` returns stale range from previous interval
-
-### Live Incomplete Candle (CRITICAL FIX — data_source.py)
-- ✅ OANDA's `count`-based candle request returns **only complete (closed) candles**
-- ✅ On higher timeframes (4h, 8h, 1d) the currently-forming bar was missing entirely, creating a visible gap between last closed bar and the price line
-- ✅ Fix: after the main `count` request, a **second request** is made with `from=<last_complete_bar_time + 1s>&count=1` which returns the currently-forming bar
-- ✅ The live bar is appended only if its timestamp is strictly after the last complete bar (dedup guard)
-- ✅ The second request is **best-effort** — wrapped in try/except, failure does not affect the main data
-- ✅ On 15m the gap was <15min (barely visible); on 4h it was up to 4 hours (very obvious)
-- ✅ `onPriceUpdate()` updates this live bar in real-time as OANDA streaming ticks arrive
-
-### Timezone
-- ✅ Chart timezone picker — 8 options, persists via `chartTimezone`, applies to all panes
-- ✅ `tickMarkFormatter` + `timeFormatter` approach (do NOT shift timestamps)
-- ⚠️ Do NOT use timestamp-shifting for timezone — causes axis/crosshair mismatch
-
-### Pine Script Converter Tool
-- ✅ Standalone at `http://localhost:5050/tools/pine-converter`
-- ✅ Calls Anthropic API directly from browser (`claude-sonnet-4-5`)
-- ⚠️ `_addIndicator(id)` receives only a string ID — no `indicator.params` object. Use hardcoded defaults.
-
-### Indicators (27+)
-- ✅ SMA 20/50/200, EMA 20/50/200, VWAP, VWMA 20
-- ✅ Bollinger, Donchian, Keltner
-- ✅ Supertrend, Ichimoku, Parabolic SAR, Pivot Points
-- ✅ Volume, RSI, MACD, Stochastic, Stoch RSI, ATR, ADX, CCI, CMF, OBV, MFI, Williams %R, Momentum
-- ✅ S/D Zones & Major Structure Auto Fib (canvas)
-- ✅ Order Blocks (canvas)
-
-### Drawing Tools
-- ✅ Fibonacci retracement
-- ✅ Trendlines — click to select/panel, drag endpoints; **lock** prevents moves
-- ✅ Horizontal lines — click to select/panel, drag, price alert toggle; **lock**
-- ✅ Vertical lines — click to select/panel, drag; **lock**; vline panel crash fixed (was referencing `h.alert` in vline context)
-- ✅ Long/Short position blocks — see section below
-- ✅ **Lock toggle (🔓/🔒)** on all drawing panels — persisted in save state
-- ✅ **Click any line to reopen its panel** — panel shown on mousedown hit, not only after drag
-- ✅ **Locked lines still open panel on click** — just cannot be dragged
-
-#### Long/Short Position Blocks
-- ✅ Bounded rectangular block anchored to entry candle's `startTime`
-- ✅ `widthBars` (default 20) — right-edge drag handle to resize
-- ✅ Block x-position extrapolates correctly when `startTime` scrolls off-screen left
-- ✅ TP block (green), SL block (red), Entry/TP/SL lines with price labels, pip counts
-- ✅ Lock toggle — locked positions cannot be dragged
-- ✅ Panel restores collapsed after page load; click to expand
-- ✅ Click-to-reopen — clicking line when panel is closed reopens without moving position
-- ✅ Risk calculator: account $, risk %, lot size → risk $, lots, units, TP $
-- ✅ `startTime`, `widthBars`, `locked`, `_calcAcct`, `_calcRisk`, `_calcLotSz` all persisted
-
-#### Candle Style in DRAW flyout
-- ✅ "CANDLE STYLE" section at bottom of DRAW flyout
-- ✅ 6 colour pickers + ⊘ transparent toggle on fills + ↺ Reset Defaults
+### Bar Spacing Persistence
+- ✅ Keyed per symbol + interval — `barSpacing:SYMBOL:INTERVAL`
+- ✅ Each timeframe has its own independent zoom level
 
 ### State Persistence
 - ✅ `state_store.js` — key schema `cs:EURUSD`
 - ✅ Drawings shared across ALL intervals for a symbol
 - ✅ Indicators saved per symbol+interval
-- ✅ **`_drawingsRestored` flag** — drawings restore runs once per symbol load only; prevents duplication on interval switches
-- ✅ `_drawingsRestored` resets in `_changeSymbol()` so new symbol restores correctly
-- ✅ Position blob fields: `id, side, entryPrice, slPrice, tpPrice, startTime, widthBars, locked, _calcAcct, _calcRisk, _calcLotSz`
-- ✅ Trendline blob: `id, color, locked, ptA, ptB`
-- ✅ Hline blob: `id, price, color, alert, locked`
-- ✅ Vline blob: `id, time, color, locked`
+- ✅ `_drawingsRestored` flag prevents duplication on interval switches
+- ✅ `_syncToServer()` — fire-and-forget POST to `/api/state/save` on every save
 
-### Popout Window
-- ✅ Full indicator + drawing flyouts
-- ✅ Live price routing via socket handlers
-- ✅ Timezone, bar spacing, right offset all work identically
-- ⚠️ Flyout panels embedded directly in `popout.html` — not inherited from `index.html`
-- ⚠️ Candle colour section in DRAW flyout exists in `app.js openDrawFlyout()` — popout.html has its own `openDrawFlyout()` and needs equivalent wiring (bucket list)
+### Drawing Tools
+- ✅ Fibonacci, Trendlines, Horizontal/Vertical lines, Long/Short position blocks
+- ✅ Lock toggle (🔓/🔒) on all drawing panels — persisted in save state
+- ✅ Click any line to reopen its panel
 
-### Alert System
-- ✅ `alert_engine.js` — 60s cooldown per level
-- ✅ Browser Web Notifications + Telegram Bot API
-- ✅ Alert toggle on horizontal lines, persisted in state
+### Indicators (27+)
+- ✅ SMA/EMA (20/50/200), VWAP, VWMA
+- ✅ Bollinger, Donchian, Keltner
+- ✅ Supertrend, Ichimoku, Parabolic SAR, Pivot Points
+- ✅ Volume, RSI, MACD, Stochastic, Stoch RSI, ATR, ADX, CCI, CMF, OBV, MFI, Williams %R, Momentum
+- ✅ S/D Zones & Auto Fib (canvas), Order Blocks (canvas)
 
 ---
 
-## Key Implementation Details
-
-### pane.js — ChartPane class
-- Chart init deferred until ResizeObserver fires
-- Drawing layer = transparent `<div>` overlay, z-index 5
-- Position blocks canvas z-index 6, S/D Zones z-index 7, Order Blocks z-index 8, Trendline/hline/vline canvas z-index 9
-
-### _renderCandles() — CRITICAL pattern
-```javascript
-// 1. Remove + recreate candleSeries (fixes LWC interval-switch alignment bug)
-if (this.candleSeries) { try { this.chart.removeSeries(this.candleSeries); } catch(e) {} }
-this.candleSeries = this.chart.addCandlestickSeries({
-  ...colours from _loadCandleColors()...,
-  priceLineVisible: true, lastValueVisible: true,
-  priceLineColor: '#ffffff', priceLineWidth: 1,
-});
-// 2. setData
-this.candleSeries.setData(this.candles);
-// 3. Restore spacing or fitContent, then defer offset
-requestAnimationFrame(() => this._applyRightOffset());
-```
-
-### _applyRightOffset()
-- Proportional: `offset = clamp(round(visible * 0.08), 3, 30)`
-- Must be called via `requestAnimationFrame` — LWC `fitContent()` is async
-
-### Bar spacing keys
-- `barSpacing:SYMBOL:INTERVAL` — e.g. `barSpacing:EURUSD:4h`
-- Each timeframe independent; old `barSpacing:SYMBOL` keys orphaned harmlessly
-
-### data_source.py — live incomplete candle
+## app.py — Snapshot Registration Pattern
 ```python
-# After main count request, fetch live bar:
-from_str = (last_complete_bar_time + 1s).strftime(...)
-r2 = requests.get(url, params={"granularity": g, "from": from_str, "count": "1", "price": "M"})
-# Append if timestamp > last_complete_time; wrapped in try/except (best-effort)
+from snapshot_routes import snapshot_bp, init_app as _snapshot_init
+app.register_blueprint(snapshot_bp)
+_snapshot_init(app)   # starts plain-HTTP sidecar on a free port at startup
 ```
 
-### Candle colour implementation
-- `_defaultCandleColors()` — returns `{ bullFill, bullBorder, bullWick, bearFill, bearBorder, bearWick }`
-- `_loadCandleColors()` — reads `candleColors` from localStorage, merges with defaults
-- `applyCandleColors(colors)` — persists + resolves transparent + calls `candleSeries.applyOptions()` WITH `priceLineVisible: true` etc.
-- Always set `priceLineColor: '#ffffff'` explicitly — never let it inherit fill colour
+## state_store.js — Server Sync Patch
+```javascript
+function saveDrawings(symbol, drawings, fibLevels) {
+  const blob = _load(symbol) || _empty();
+  blob.drawings  = drawings;
+  blob.fibLevels = fibLevels;
+  const ok = _save(symbol, blob);
+  if (ok) _syncToServer(symbol, blob);  // ← added line
+  return ok;
+}
+```
 
-### Drawing tool line panels
-- All three line types show panel on **mousedown hit** (not only after drag)
-- Locked lines still open panel on click — just skip drag initiation
-- `e.target.closest('.trend-edit-panel, .fib-edit-panel, .pos-panel')` guard prevents panel clicks from propagating
+## snapshot.html — Ready Signal Pattern
+```javascript
+// Poll until candles loaded, then signal Playwright
+function _poll() {
+  const pane = window._snapPane;
+  if (pane && pane.candles && pane.candles.length > 0) {
+    setTimeout(() => {
+      // view range set here (logical bar indices, not timestamps)
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(_signalReady, 300);
+      }));
+    }, 500);
+  } else { setTimeout(_poll, 100); }
+}
+```
 
-### Vline panel fix
-- Old `_vlineShowPanel` referenced `h.alert` / `h` (hline variable) — silent ReferenceError
-- Fixed: vline panel has no alert section, only colour swatches + lock + delete
-
-### State restore deduplication
-- `_drawingsRestored` boolean on ChartPane instance
-- Set to `true` after first drawing restore; checked at top of `_restoreState()`
-- Reset to `false` in `_changeSymbol()` and on construction
-- Without this: interval switches call `_loadData` → `_restoreState` → duplicate every drawing in memory
-
-### state_store.js
-- Key: `cs:EURUSD`
-- Blob: `{ drawings: {fibs, trendlines, hlines, vlines, positions}, indicators: {"15m": [...]}, fibLevels: [...], savedAt }`
+## snapshot_routes.py — Right Offset Pattern
+```python
+# Applied in Playwright AFTER __SNAPSHOT_READY__ fires
+# Avoids race with indicator renders that call fitContent()
+page.evaluate("""() => {
+    const pane = window._snapPane;
+    const ts   = pane.chart.timeScale();
+    const range = ts.getVisibleLogicalRange();
+    ts.setVisibleLogicalRange({ from: range.from, to: pane.candles.length - 1 + 8 });
+}""")
+page.wait_for_timeout(600)  # canvas overlay settle time
+```
 
 ---
 
@@ -252,38 +261,55 @@ r2 = requests.get(url, params={"granularity": g, "from": from_str, "count": "1",
 
 ---
 
-## OANDA + Telegram Configuration
+## Environment Variables
 ```bash
+# Joshua Terminal (.env in JT folder)
 OANDA_API_KEY=your_token_here
 OANDA_ACCOUNT_ID=your_account_id
 OANDA_ENV=practice          # or live
 TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=-123456789  # group chat IDs are negative
+TELEGRAM_CHAT_ID=-123456789
+SSL_CERT=localhost.pem      # optional — enables PWA standalone mode
+SSL_KEY=localhost-key.pem
+SNAPSHOT_KEEP_DAYS=7        # optional — days to retain snapshot PNGs (0 = keep forever)
+
+# Analysis pipeline (.env in forex_automation folder)
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=claude-opus-4-5
+PAIRS=PEPPERSTONE:EURUSD,PEPPERSTONE:AUDJPY,PEPPERSTONE:GBPUSD,PEPPERSTONE:USDJPY
+TIMEFRAMES=4H,15
+REPORT_DIR=./reports
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=-123456789
+JT_BASE_URL=                # optional — override auto-detected JT URL
+JT_PORT=5050                # optional — override default port
+SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 ```
 
 ---
 
 ## Bucket List (future sessions)
+- [ ] **Web search in analysis** — add `web_search` tool to `client.messages.create()` in `run_analysis.py`
+- [ ] **Telegram inline images** — send PNGs alongside analysis text
+- [ ] **Scheduled auto-run** — scheduler config in `config.py` already exists, needs wiring
 - [ ] **Order Blocks params UI** — inputRange, BOS visibility, mitigated block toggle
 - [ ] **Replay mode** — needs historical data strategy
 - [ ] **Indicator alerts** — AlertEngine.trigger() already generic, need RSI/MACD crossing calls
 - [ ] **Notes export** — download as CSV or PDF
-- [ ] **More indicators** — custom periods, additional oscillators
-- [ ] **Pine converter improvements** — add rendering context to system prompt
 - [ ] **Candle colours in popout** — popout.html has its own `openDrawFlyout()` needing candle style section
 
 ---
 
 ## Known Quirks
 - Sub-pane oscillators not scroll-synced on load — sync after first scroll (LWC limitation)
-- yfinance data has ~15min delay on forex. OANDA streaming is real-time.
-- Fib levels are global per symbol — changing levels on one fib changes all fibs for that symbol (intentional)
-- Browser cache is aggressive — always hard refresh (Cmd+Shift+R / Ctrl+Shift+R) after updates
-- Telegram group chat IDs are negative numbers
-- LWC `timeToCoordinate()` returns `null` for timestamps outside visible range — always extrapolate using pixel-per-bar
-- Position block `startTime` may be off-screen left as chart scrolls forward — extrapolation handles this
-- Old `barSpacing:SYMBOL` localStorage keys (without interval suffix) are orphaned — ignored harmlessly
-- `candleSeries` is recreated on every `_renderCandles()` call — this is intentional, do not "optimise" it away
+- yfinance data has ~15min delay on forex. OANDA streaming is real-time
+- `candleSeries` recreated on every `_renderCandles()` — intentional, do not optimise away
+- LWC `setVisibleRange()` with future timestamps does NOT create right-side empty space — use `setVisibleLogicalRange()` with bar indices beyond `count - 1` instead
+- `page.evaluate()` offset must run AFTER `__SNAPSHOT_READY__` — indicator renders call `fitContent()` which overwrites any earlier range set
+- `current_app._get_current_object()` inside threads is unreliable — the wsgiref sidecar gets the app object at startup via `init_app(app)`, not via Flask context proxy
+- Python 3.9 does not support `int | None` union syntax — use `Optional[int]` from `typing`
+- Playwright self-signed cert issue is solved by the sidecar, not by `ignore_https_errors`
+- `snapshot_state.json` and `snapshots/` folder should be in `.gitignore`
 
 ---
 
@@ -291,10 +317,19 @@ TELEGRAM_CHAT_ID=-123456789  # group chat IDs are negative
 ```bash
 cd joshua_terminal
 pip install -r requirements.txt
+pip install playwright && playwright install chromium   # for snapshot system
 cp .env.example .env   # then fill in your keys
 python app.py
-# → http://localhost:5050
+# → https://localhost:5050 (if SSL certs present) or http://localhost:5050
 ```
+
 Debug: `http://localhost:5050/debug`
-Popout: `http://localhost:5050/popout?symbol=EUR/USD&interval=15m&source=oanda`
-Pine converter: `http://localhost:5050/tools/pine-converter`
+Snapshot list: `https://localhost:5050/api/snapshot/list`
+State list: `https://localhost:5050/api/state/list`
+
+## Running the Analysis Pipeline
+```bash
+cd forex_automation
+python run_analysis.py --dry-run --save-screenshots   # verify charts first
+python run_analysis.py                                # full run with Claude analysis
+```

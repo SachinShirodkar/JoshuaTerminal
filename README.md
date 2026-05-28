@@ -2,6 +2,7 @@
 
 A free, local, self-hosted multi-chart trading dashboard — your personal TradingView replacement.
 Built with Flask + Socket.IO (backend), Lightweight Charts (frontend), and plain HTML/CSS/JS.
+Includes an integrated AI analysis pipeline that captures your charts (with all drawings and indicators) and sends them to Claude for supply/demand zone analysis.
 
 ---
 
@@ -22,6 +23,7 @@ Built with Flask + Socket.IO (backend), Lightweight Charts (frontend), and plain
 - **State persistence** — drawings, indicators, candle colours, and pane layouts saved to localStorage and restored automatically
 - **World clock** — UTC, New York, London, Tokyo times in topbar
 - **Session indicator** — Asia / London / US Open / Overlap / Pre-market / After Hours / Weekend
+- **AI analysis pipeline** — headless Playwright snapshots of your live charts (with S/D zones and indicators) sent to Claude for automated forex analysis, report saved locally and delivered via Telegram
 
 ---
 
@@ -29,7 +31,7 @@ Built with Flask + Socket.IO (backend), Lightweight Charts (frontend), and plain
 
 ### 1. Prerequisites
 
-- Python 3.10+
+- Python 3.9+
 - A free OANDA practice account — [oanda.com](https://www.oanda.com/) (for real-time forex)
 
 ### 2. Install dependencies
@@ -37,6 +39,7 @@ Built with Flask + Socket.IO (backend), Lightweight Charts (frontend), and plain
 ```bash
 cd joshua_terminal
 pip install -r requirements.txt
+pip install playwright && playwright install chromium   # for AI analysis snapshots
 ```
 
 ### 3. Configure environment
@@ -45,15 +48,17 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your credentials:
+Edit `.env`:
 
 ```
 OANDA_API_KEY=your_token_here
 OANDA_ACCOUNT_ID=your_account_id
 OANDA_ENV=practice
 
-TELEGRAM_BOT_TOKEN=your_bot_token    # optional — for Telegram alerts
+TELEGRAM_BOT_TOKEN=your_bot_token    # optional — for price alerts
 TELEGRAM_CHAT_ID=-123456789          # note: group chat IDs are negative
+
+SNAPSHOT_KEEP_DAYS=7                 # optional — days to retain analysis snapshots
 ```
 
 ### 4. Run
@@ -64,7 +69,50 @@ python app.py
 
 Open your browser at **http://localhost:5050**
 
-> Without an OANDA key the terminal still works — it falls back to Yahoo Finance (15-minute delay) for candle data and polls prices every 5 seconds.
+> Without an OANDA key the terminal still works — it falls back to Yahoo Finance (15-minute delay) and polls prices every 5 seconds.
+
+---
+
+## AI Analysis Pipeline
+
+Joshua Terminal includes a headless chart capture system that replaces the TradingView MCP dependency entirely. Your saved drawings (S/D zones, Fibonacci levels, trendlines) and indicators are preserved in every snapshot.
+
+### How it works
+
+1. `snapshot_runner.py` calls `POST /api/snapshot` on the running JT server
+2. Flask launches Playwright headless Chromium, navigates to an internal plain-HTTP port
+3. The chart renders with your actual saved state (drawings + indicators)
+4. Playwright screenshots the chart and returns the PNG as base64
+5. `run_analysis.py` collects all pair × timeframe snapshots and sends them to Claude
+6. Analysis saved to `reports/` and optionally sent via Telegram
+
+### Setup (in your analysis folder)
+
+```bash
+# analysis .env
+ANTHROPIC_API_KEY=your_key
+PAIRS=PEPPERSTONE:EURUSD,PEPPERSTONE:AUDJPY,PEPPERSTONE:GBPUSD,PEPPERSTONE:USDJPY
+TIMEFRAMES=4H,15
+REPORT_DIR=./reports
+```
+
+### Run analysis
+
+```bash
+# Test first — inspect PNGs before spending API credits
+python run_analysis.py --dry-run --save-screenshots
+
+# Full run
+python run_analysis.py
+```
+
+### Before first run — migrate your drawings
+
+If you have existing saved drawings in JT, run this once in your browser's DevTools console while JT is open to export them to the server (so Playwright can find them):
+
+Open DevTools → Console → paste contents of `migrate_state.js` → Enter
+
+From then on, every SAVE click in JT automatically syncs drawings to the server.
 
 ---
 
@@ -81,56 +129,37 @@ Open with the **DRAW** button in any pane toolbar. All drawings save per symbol 
 | Long Position | Click entry, drag to stop loss | TP auto-set at 1:1 R:R |
 | Short Position | Click entry, drag to stop loss | TP auto-set at 1:1 R:R |
 
-**Interacting with drawn lines:** Click any line to open its edit panel (colour, lock, delete). Click elsewhere to dismiss. Click the line again to reopen.
-
-**Lock:** Each edit panel has a 🔓/🔒 button. Locked drawings cannot be moved by accident — the panel still opens for inspection or deletion.
-
-**Position blocks** show a floating panel with TP/SL prices, pip distances, R:R ratio, and a risk calculator (account $, risk %, lot size → risk $, lots, units, TP $). The block is anchored to the entry candle and can be resized by dragging its right edge.
+**Lock:** Each edit panel has a 🔓/🔒 button. Locked drawings cannot be moved — panel still opens for inspection or deletion.
 
 ---
 
 ## Candle Style
 
-Open the **DRAW** flyout and scroll to **CANDLE STYLE** at the bottom. Six colour pickers let you set:
-
-- Bull Fill / Bull Border / Bull Wick
-- Bear Fill / Bear Border / Bear Wick
-
-The **⊘** button next to Bull Fill and Bear Fill toggles transparent/hollow candle bodies. Changes apply live to all panes and persist across sessions. The **↺ Reset Defaults** button restores the original green/red scheme.
+Open **DRAW** → scroll to **CANDLE STYLE**. Six colour pickers: Bull/Bear Fill, Border, Wick. The **⊘** button toggles transparent/hollow candles. **↺ Reset Defaults** restores green/red. Changes apply live to all panes.
 
 ---
 
 ## Multi-Monitor
 
-- **Pane popout** (⧉ in pane toolbar) — pops that chart into a new window; full indicator and drawing tools available
-- **Full terminal** (⧉ in topbar) — opens a complete second Joshua Terminal instance on the second screen
+- **Pane popout** (⧉ in pane toolbar) — pops that chart into a new window
+- **Full terminal** (⧉ in topbar) — opens a complete second Joshua Terminal instance
 
 ---
 
-## Notes / Journal
+## PWA / Standalone Mode
 
-Each pane has a notes button (📝). Click it to open the notes panel for that symbol. Add notes with tags (Idea, Trade, Risk, Misc). Notes persist in localStorage per symbol. A gold dot on the button indicates a symbol has notes.
-
----
-
-## Symbol Reference
-
-| Source | Format | Examples |
-|---|---|---|
-| **OANDA** | Slash format | EUR/USD, GBP/USD, XAU/USD |
-| **Yahoo Finance** | Various | EURUSD=X, AAPL, ^GSPC, GC=F |
-| **Hyperliquid** | Coin name | BTC, ETH, SOL, AVAX |
+Install as a standalone app (no browser chrome) using HTTPS + mkcert. See `SETUP.md` for full instructions.
 
 ---
 
 ## Tips
 
-- **Full cache clear** if changes do not appear — browser caching is aggressive on JS and CSS files (`Cmd+Shift+R` / `Ctrl+Shift+R`)
-- **Save your drawings** with the SAVE button — amber dot means unsaved changes
+- **Save your drawings** with the SAVE button — amber dot means unsaved changes. Saving also syncs drawings to the server so they appear in AI analysis snapshots
 - **Drawings follow the symbol**, not the timeframe — your EURUSD lines appear on every interval
 - **Indicators are per timeframe** — RSI on 15m is saved separately from RSI on 1h
-- **Candle width is saved per symbol** — resize once, it restores automatically on every timeframe switch
+- **Full cache clear** if changes do not appear — `Cmd+Shift+R` / `Ctrl+Shift+R`
 - **Debug endpoint** — `http://localhost:5050/debug` shows data source health
+- **Snapshot list** — `https://localhost:5050/api/snapshot/list` shows all captured PNGs
 
 ---
 
@@ -138,6 +167,6 @@ Each pane has a notes button (📝). Click it to open the notes panel for that s
 
 **Add a data source:** Implement `get_candles()` and `get_price()` in `data_source.py`.
 
-**Add an indicator:** Add the maths to `indicators.js`, add a definition to `INDICATOR_DEFS` in `pane.js`, add a `case` to `_addIndicator()`.
+**Add an indicator:** Add maths to `indicators.js`, definition to `INDICATOR_DEFS` in `pane.js`, case to `_addIndicator()`.
 
-**Add an alert type:** Call `AlertEngine.trigger(payload)` with `type`, `direction`, `level`, `current`, `label` — the engine handles browser and Telegram delivery automatically.
+**Add an alert type:** Call `AlertEngine.trigger(payload)` — the engine handles browser and Telegram delivery automatically.
