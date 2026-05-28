@@ -232,13 +232,15 @@ class ChartPane {
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
     });
 
+    const cc = this._loadCandleColors();
+    const _r = v => (v === 'transparent' ? 'rgba(0,0,0,0)' : v);
     this.candleSeries = this.chart.addCandlestickSeries({
-      upColor:         '#00e676',
-      downColor:       '#ff3d5a',
-      borderUpColor:   '#00e676',
-      borderDownColor: '#ff3d5a',
-      wickUpColor:     '#00e676',
-      wickDownColor:   '#ff3d5a',
+      upColor:         _r(cc.bullFill),
+      downColor:       _r(cc.bearFill),
+      borderUpColor:   cc.bullBorder,
+      borderDownColor: cc.bearBorder,
+      wickUpColor:     cc.bullWick,
+      wickDownColor:   cc.bearWick,
     });
 
     // Track ongoing resize (after chart is created)
@@ -518,6 +520,42 @@ class ChartPane {
       const v = parseFloat(localStorage.getItem(`barSpacing:${this.symbol}`));
       return isNaN(v) ? null : v;
     } catch(e) { return null; }
+  }
+
+  // ── Candle colours ───────────────────────────────────
+
+  _defaultCandleColors() {
+    return {
+      bullFill:   '#00e676',
+      bullBorder: '#00e676',
+      bullWick:   '#00e676',
+      bearFill:   '#ff3d5a',
+      bearBorder: '#ff3d5a',
+      bearWick:   '#ff3d5a',
+    };
+  }
+
+  _loadCandleColors() {
+    try {
+      const raw = localStorage.getItem('candleColors');
+      return raw ? { ...this._defaultCandleColors(), ...JSON.parse(raw) } : this._defaultCandleColors();
+    } catch(e) { return this._defaultCandleColors(); }
+  }
+
+  applyCandleColors(colors) {
+    try {
+      localStorage.setItem('candleColors', JSON.stringify(colors));
+    } catch(e) {}
+    if (!this.candleSeries) return;
+    const resolve = v => (v === 'transparent' ? 'rgba(0,0,0,0)' : v);
+    this.candleSeries.applyOptions({
+      upColor:         resolve(colors.bullFill),
+      downColor:       resolve(colors.bearFill),
+      borderUpColor:   colors.bullBorder,
+      borderDownColor: colors.bearBorder,
+      wickUpColor:     colors.bullWick,
+      wickDownColor:   colors.bearWick,
+    });
   }
 
   // ── Live subscriptions ───────────────────────────────

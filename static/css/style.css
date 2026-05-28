@@ -467,8 +467,92 @@ html, body {
 }
 .indicator-row:hover .indicator-name { color: var(--text); }
 
+/* ─── CANDLE COLOUR PICKERS ─────────────────────────── */
+.candle-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.candle-color-row:hover { background: var(--bg4); }
 
-/* ─── API KEY BANNER ────────────────────────────────── */
+.candle-color-label {
+  font-size: 11px;
+  color: var(--text2);
+  flex: 1;
+}
+
+.candle-color-input {
+  width: 36px;
+  height: 22px;
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  background: var(--bg3);
+  cursor: pointer;
+  padding: 1px 2px;
+  flex-shrink: 0;
+}
+.candle-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.candle-color-input::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+.candle-color-reset-row {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+.candle-color-reset-btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text3);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.candle-color-reset-btn:hover {
+  color: var(--text2);
+  border-color: var(--border2);
+}
+
+/* Transparent toggle button (⊘) */
+.candle-trans-btn {
+  font-size: 13px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.candle-trans-btn:hover {
+  color: var(--text2);
+  border-color: var(--border2);
+}
+.candle-trans-btn.active {
+  color: var(--accent);
+  border-color: var(--accent2);
+  background: rgba(0,200,255,0.08);
+}
+
+/* Colour picker — greyed out when transparent is active */
+.candle-color-input.disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+
 
 #key-banner {
   background: linear-gradient(90deg, rgba(240,165,0,0.15), rgba(240,165,0,0.05));

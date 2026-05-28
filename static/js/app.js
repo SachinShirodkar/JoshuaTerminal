@@ -449,6 +449,85 @@ const App = (() => {
     clearGroup.appendChild(clearRow);
     body.appendChild(clearGroup);
 
+    // ── Candle Style section ──────────────────────────────
+    const cc = pane._loadCandleColors();
+
+    const candleGroup = document.createElement('div');
+    candleGroup.className = 'draw-tool-group';
+    const candleLabel = document.createElement('div');
+    candleLabel.className = 'indicator-group-label';
+    candleLabel.textContent = 'CANDLE STYLE';
+    candleGroup.appendChild(candleLabel);
+
+    // Rows: fill keys get a transparent toggle, others just the colour picker
+    const CANDLE_PICKERS = [
+      { key: 'bullFill',   label: 'Bull Fill',   hasTrans: true  },
+      { key: 'bullBorder', label: 'Bull Border', hasTrans: false },
+      { key: 'bullWick',   label: 'Bull Wick',   hasTrans: false },
+      { key: 'bearFill',   label: 'Bear Fill',   hasTrans: true  },
+      { key: 'bearBorder', label: 'Bear Border', hasTrans: false },
+      { key: 'bearWick',   label: 'Bear Wick',   hasTrans: false },
+    ];
+
+    const refreshCandleSection = () => {
+      // Re-render just the candle group after a transparent toggle
+      openDrawFlyout(paneId);
+    };
+
+    CANDLE_PICKERS.forEach(({ key, label, hasTrans }) => {
+      const isTransparent = hasTrans && cc[key] === 'transparent';
+
+      const row = document.createElement('div');
+      row.className = 'candle-color-row';
+
+      const lbl = document.createElement('span');
+      lbl.className = 'candle-color-label';
+      lbl.textContent = label;
+      row.appendChild(lbl);
+
+      if (hasTrans) {
+        // Transparent toggle pill
+        const transBtn = document.createElement('button');
+        transBtn.className = 'candle-trans-btn' + (isTransparent ? ' active' : '');
+        transBtn.title = 'Toggle transparent fill';
+        transBtn.textContent = '⊘';
+        transBtn.addEventListener('click', () => {
+          cc[key] = isTransparent ? pane._defaultCandleColors()[key] : 'transparent';
+          panes.forEach(p => p.applyCandleColors({ ...cc }));
+          refreshCandleSection();
+        });
+        row.appendChild(transBtn);
+      }
+
+      // Colour picker — hidden (but still updates cc) when transparent
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.className = 'candle-color-input' + (isTransparent ? ' disabled' : '');
+      input.value = isTransparent ? pane._defaultCandleColors()[key] : cc[key];
+      input.disabled = isTransparent;
+      input.addEventListener('input', () => {
+        cc[key] = input.value;
+        panes.forEach(p => p.applyCandleColors({ ...cc }));
+      });
+      row.appendChild(input);
+
+      candleGroup.appendChild(row);
+    });
+
+    // Reset button
+    const resetRow = document.createElement('div');
+    resetRow.className = 'candle-color-reset-row';
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'candle-color-reset-btn';
+    resetBtn.textContent = '↺ Reset Defaults';
+    resetBtn.addEventListener('click', () => {
+      panes.forEach(p => p.applyCandleColors({ ...pane._defaultCandleColors() }));
+      openDrawFlyout(paneId);
+    });
+    resetRow.appendChild(resetBtn);
+    candleGroup.appendChild(resetRow);
+    body.appendChild(candleGroup);
+
     document.getElementById('drawing-flyout').classList.add('open');
     _syncBackdrop();
     document.querySelectorAll('.btn-draw-open').forEach((b, i) =>
