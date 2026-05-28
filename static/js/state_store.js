@@ -61,7 +61,31 @@ const StateStore = (() => {
     const blob = _load(symbol) || _empty();
     blob.drawings  = drawings;
     blob.fibLevels = fibLevels;
-    return _save(symbol, blob);
+    const ok = _save(symbol, blob);
+    if (ok) _syncToServer(symbol, blob);  // keep snapshot_state.json in sync
+    return ok;
+  }
+
+  /**
+   * Fire-and-forget POST to /api/state/save so Playwright snapshots always
+   * see the latest drawings without any manual migration step.
+   * Never throws — localStorage save already succeeded before this runs.
+   */
+  function _syncToServer(symbol, blob) {
+    try {
+      fetch('/api/state/save', {
+        method:    'POST',
+        headers:   { 'Content-Type': 'application/json' },
+        body:      JSON.stringify({ symbol, state: blob }),
+        keepalive: true,
+      }).then(r => {
+        if (!r.ok) console.warn('[StateStore] server sync failed for', symbol, r.status);
+      }).catch(e => {
+        console.warn('[StateStore] server sync error:', e.message);
+      });
+    } catch(e) {
+      console.warn('[StateStore] _syncToServer threw:', e);
+    }
   }
 
   /**

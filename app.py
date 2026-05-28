@@ -10,6 +10,7 @@ from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 import data_source as ds
+from snapshot_routes import snapshot_bp
 
 load_dotenv()
 
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "trading_terminal_secret"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+# ── Snapshot blueprint (state API + headless chart capture) ───────────────────
+app.register_blueprint(snapshot_bp)
+from snapshot_routes import init_app as _snapshot_init
+_snapshot_init(app)   # starts plain-HTTP sidecar for Playwright on a free port
 
 # ─── Disable browser cache for JS/CSS so updates are always picked up ────────
 
@@ -322,6 +328,12 @@ def hl_get_candles(symbol, interval, limit):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/snapshot")
+def snapshot_page():
+    """Headless chart page rendered by Playwright for analysis snapshots."""
+    return render_template("snapshot.html")
 
 
 @app.route("/popout")
