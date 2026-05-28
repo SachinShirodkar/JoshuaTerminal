@@ -1118,9 +1118,11 @@ class ChartPane {
       e.stopPropagation();
       this.chart.applyOptions({ handleScale:{mouseWheel:false,pinch:false}, handleScroll:{mouseWheel:false,pressedMouseMove:false} });
       const rect  = e.currentTarget.getBoundingClientRect();
+      const mx    = e.clientX - rect.left;
       const price = this._pixelToPrice(e.clientY - rect.top);
+      const time  = this._pixelToTime(mx);
       if (price === null) return;
-      this._posDrawing = { side: this.drawingMode, entryPrice: price, series: [], overlayEl: null };
+      this._posDrawing = { side: this.drawingMode, entryPrice: price, startTime: time, series: [], overlayEl: null };
       return;
     }
     if (this.drawingMode === 'trend') {
@@ -1187,7 +1189,7 @@ class ChartPane {
 
     if (this._posDrawing) {
       const slPrice = this._pixelToPrice(my);
-      if (slPrice !== null) this._drawPositionPreview(this._posDrawing.side, this._posDrawing.entryPrice, slPrice);
+      if (slPrice !== null) this._drawPositionPreview(this._posDrawing.side, this._posDrawing.entryPrice, slPrice, this._posDrawing.startTime);
       return;
     }
     if (this._trendDrawing) {
@@ -1213,7 +1215,7 @@ class ChartPane {
       const slPrice = this._pixelToPrice(e.clientY - rect.top);
       this.chart.applyOptions({ handleScale:{mouseWheel:true,pinch:true}, handleScroll:{mouseWheel:true,pressedMouseMove:true} });
       if (slPrice !== null && Math.abs(slPrice - this._posDrawing.entryPrice) > 0.000001) {
-        this._commitPosition(this._posDrawing.side, this._posDrawing.entryPrice, slPrice);
+        this._commitPosition(this._posDrawing.side, this._posDrawing.entryPrice, slPrice, this._posDrawing.startTime);
         this.drawingMode = null;
         this._updateDrawingUI();
       } else {
@@ -1651,7 +1653,7 @@ class ChartPane {
   }
 
   _drawPosOnCanvas(ctx, pos, alpha, dragging) {
-    const { side, entryPrice, slPrice, tpPrice } = pos;
+    const { side, entryPrice, slPrice, tpPrice, startTime, widthBars = 20 } = pos;
     const isLong = side === 'long';
 
     const entryY = this._priceToPixel(entryPrice);
@@ -1659,45 +1661,89 @@ class ChartPane {
     const tpY    = this._priceToPixel(tpPrice);
     if (entryY === null || slY === null || tpY === null) return;
 
+    // ── X bounds: anchor to startTime, extrapolate if scrolled off-screen ──────
+    const c = this.candles;
+    let pxPerBar = 8;
+    if (c && c.length >= 2) {
+      const lastX = this.chart.timeScale().timeToCoordinate(c[c.length - 1].time);
+      const prevX = this.chart.timeScale().timeToCoordinate(c[c.length - 2].time);
+      if (lastX !== null && prevX !== null && Math.abs(lastX - prevX) > 0) {
+        pxPerBar = Math.abs(lastX - prevX);
+      }
+    }
+
+    // Resolve startTime → x pixel, extrapolating beyond visible range
+    const _timeToXPos = (t) => {
+      if (!t || !c || c.length < 2) return 0;
+      const px = this.chart.timeScale().timeToCoordinate(t);
+      if (px !== null) return px;
+      // Off-screen: extrapolate using last two visible candles as reference
+      const lastX = this.chart.timeScale().timeToCoordinate(c[c.length - 1].time);
+      const prevX = this.chart.timeScale().timeToCoordinate(c[c.length - 2].time);
+      if (lastX === null || prevX === null) return 0;
+      const barMs = c[c.length - 1].time - c[c.length - 2].time;
+      if (barMs === 0) return lastX;
+      return lastX + ((t - c[c.length - 1].time) / barMs) * pxPerBar;
+    };
+
+    const x0    = _timeToXPos(startTime);
+    const x1    = x0 + widthBars * pxPerBar;
+    const blockW = x1 - x0;
+    if (blockW <= 0) return;
+
     const W = this._posCanvas.width;
-    const GREEN = `rgba(0,230,118,${alpha * 0.18})`;
-    const RED   = `rgba(255,61,90,${alpha * 0.18})`;
-    const GREEN_LINE = `rgba(0,230,118,${alpha})`;
-    const RED_LINE   = `rgba(255,61,90,${alpha})`;
-    const GOLD_LINE  = `rgba(240,165,0,${alpha})`;
+    const GREEN       = `rgba(0,230,118,${alpha * 0.2})`;
+    const RED         = `rgba(255,61,90,${alpha * 0.2})`;
+    const GREEN_LINE  = `rgba(0,230,118,${alpha})`;
+    const RED_LINE    = `rgba(255,61,90,${alpha})`;
+    const GOLD_LINE   = `rgba(240,165,0,${alpha})`;
     const GREEN_LABEL_BG = `rgba(0,180,90,${alpha})`;
     const RED_LABEL_BG   = `rgba(220,40,60,${alpha})`;
     const GOLD_LABEL_BG  = `rgba(200,130,0,${alpha})`;
 
-    const dec = this._priceDec();
+    const dec      = this._priceDec();
     const riskPips = this._toPips(Math.abs(entryPrice - slPrice), entryPrice);
     const rewPips  = this._toPips(Math.abs(tpPrice - entryPrice), entryPrice);
 
-    // ── TP block — always green (profit zone regardless of direction) ──
-    const tpBlockTop    = Math.min(entryY, tpY);
-    const tpBlockBot    = Math.max(entryY, tpY);
+    // ── TP block (profit zone) ───────────────────────────────────────────────
+    const tpBlockTop = Math.min(entryY, tpY);
+    const tpBlockBot = Math.max(entryY, tpY);
     ctx.fillStyle = GREEN;
-    ctx.fillRect(0, tpBlockTop, W, tpBlockBot - tpBlockTop);
+    ctx.fillRect(x0, tpBlockTop, blockW, tpBlockBot - tpBlockTop);
 
-    // ── SL block — always red (loss zone regardless of direction) ──
-    const slBlockTop    = Math.min(entryY, slY);
-    const slBlockBot    = Math.max(entryY, slY);
+    // ── SL block (loss zone) ─────────────────────────────────────────────────
+    const slBlockTop = Math.min(entryY, slY);
+    const slBlockBot = Math.max(entryY, slY);
     ctx.fillStyle = RED;
-    ctx.fillRect(0, slBlockTop, W, slBlockBot - slBlockTop);
+    ctx.fillRect(x0, slBlockTop, blockW, slBlockBot - slBlockTop);
 
-    // ── Helper: draw a horizontal price line + right-hand label ──
-    const drawLine = (y, color, labelBg, labelText, handleRadius = 5) => {
-      // Line
+    // ── Right-edge resize handle ─────────────────────────────────────────────
+    const fullTop = Math.min(tpY, slY);
+    const fullBot = Math.max(tpY, slY);
+    const handleX = x1 - 4;
+    ctx.fillStyle = `rgba(120,140,180,${alpha * 0.5})`;
+    ctx.fillRect(handleX, fullTop, 4, fullBot - fullTop);
+    // Grip dots
+    ctx.fillStyle = `rgba(180,200,220,${alpha * 0.8})`;
+    const midY = (fullTop + fullBot) / 2;
+    for (let dy = -8; dy <= 8; dy += 8) {
+      ctx.beginPath();
+      ctx.arc(handleX + 2, midY + dy, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ── Helper: draw a horizontal price line + right-hand label ──────────────
+    const drawLine = (y, color, labelBg, labelText) => {
+      // Line spans x0 to label start
       ctx.beginPath();
       ctx.strokeStyle = color;
-      ctx.lineWidth   = dragging ? 1.5 : 1.5;
+      ctx.lineWidth   = 1.5;
       ctx.setLineDash([]);
-      ctx.moveTo(0, y);
-      ctx.lineTo(W - 90, y);   // leave room for label
+      ctx.moveTo(x0, y);
+      ctx.lineTo(W - 90, y);
       ctx.stroke();
-      ctx.setLineDash([]);
 
-      // Right-hand label badge (like TV's price tag)
+      // Right-hand label badge
       const lblW = 82, lblH = 18, lblX = W - 88, lblY = y - lblH / 2;
       ctx.fillStyle = labelBg;
       ctx.beginPath();
@@ -1708,9 +1754,9 @@ class ChartPane {
       ctx.textAlign = 'left';
       ctx.fillText(labelText, lblX + 5, lblY + 12);
 
-      // Drag handle circle (small dot on the left edge of the label)
+      // Drag handle dot
       ctx.beginPath();
-      ctx.arc(lblX + 2, y, handleRadius, 0, Math.PI * 2);
+      ctx.arc(lblX + 2, y, 5, 0, Math.PI * 2);
       ctx.fillStyle = labelBg;
       ctx.fill();
     };
@@ -1719,18 +1765,18 @@ class ChartPane {
     drawLine(entryY, GOLD_LINE,  GOLD_LABEL_BG,  `ENT ${entryPrice.toFixed(dec)}`);
     drawLine(slY,    RED_LINE,   RED_LABEL_BG,   `SL  ${slPrice.toFixed(dec)}`);
 
-    // ── Small pips labels inside the blocks ──
+    // ── Pips labels inside blocks ────────────────────────────────────────────
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.textAlign = 'left';
     const tpMid = (tpBlockTop + tpBlockBot) / 2;
     const slMid = (slBlockTop + slBlockBot) / 2;
     if (Math.abs(tpBlockBot - tpBlockTop) > 14) {
       ctx.fillStyle = GREEN_LINE;
-      ctx.fillText(`+${rewPips} pips`, 8, tpMid + 4);
+      ctx.fillText(`+${rewPips} pips`, x0 + 8, tpMid + 4);
     }
     if (Math.abs(slBlockBot - slBlockTop) > 14) {
       ctx.fillStyle = RED_LINE;
-      ctx.fillText(`-${riskPips} pips`, 8, slMid + 4);
+      ctx.fillText(`-${riskPips} pips`, x0 + 8, slMid + 4);
     }
   }
 
@@ -1740,21 +1786,23 @@ class ChartPane {
     this._renderAllPositions();
   }
 
-  _drawPositionPreview(side, entryPrice, slPrice) {
+  _drawPositionPreview(side, entryPrice, slPrice, startTime) {
     const tpPrice = entryPrice + (entryPrice - slPrice);
-    this._posPreview = { side, entryPrice, slPrice, tpPrice };
+    this._posPreview = { side, entryPrice, slPrice, tpPrice, startTime, widthBars: 20 };
     this._renderAllPositions();
   }
 
   // ── Commit ────────────────────────────────────────────────
-  _commitPosition(side, entryPrice, slPrice) {
+  _commitPosition(side, entryPrice, slPrice, startTime) {
     this._posPreview = null;
     const tpPrice  = entryPrice + (entryPrice - slPrice);
     const posId    = ++this._posIdCounter;
+    // Fall back to last candle time if startTime wasn't captured
+    const st = startTime || (this.candles.length ? this.candles[this.candles.length - 1].time : 0);
     const pos = { id: posId, side, entryPrice, slPrice, tpPrice,
+                  startTime: st, widthBars: 20,
                   locked: false,
                   _dragging: null,
-                  // saved calc values persist across panel rebuilds
                   _calcAcct: 10000, _calcRisk: 1, _calcLotSz: 100000 };
     this._positions.push(pos);
     this._renderAllPositions();
@@ -1763,31 +1811,72 @@ class ChartPane {
     this.markDirty();
   }
 
-  // ── Drag handles: mouse events on chartEl to drag TP/SL ──
+  // ── Drag handles: mouse events on chartEl to drag TP/SL/entry/width ──
   _attachPosDragHandles(posId) {
     const chartEl = document.getElementById(`pane-chart-${this.id}`);
     if (!chartEl) return;
 
-    let dragging = null;   // 'tp' | 'sl' | 'entry'
+    let dragging = null;   // 'tp' | 'sl' | 'entry' | 'width'
+
+    // Helper: compute the current right-edge x pixel for a position
+    const rightEdgeX = pos => {
+      const c = this.candles;
+      if (!c || c.length < 2) return null;
+      const lastX = this.chart.timeScale().timeToCoordinate(c[c.length - 1].time);
+      const prevX = this.chart.timeScale().timeToCoordinate(c[c.length - 2].time);
+      if (lastX === null || prevX === null) return null;
+      const pxPerBar = Math.abs(lastX - prevX);
+      if (pxPerBar < 0.5) return null;
+
+      // Resolve startTime → x, extrapolating off-screen
+      let x0 = 0;
+      if (pos.startTime) {
+        const px = this.chart.timeScale().timeToCoordinate(pos.startTime);
+        if (px !== null) {
+          x0 = px;
+        } else {
+          const barMs = c[c.length - 1].time - c[c.length - 2].time;
+          if (barMs > 0) x0 = lastX + ((pos.startTime - c[c.length - 1].time) / barMs) * pxPerBar;
+        }
+      }
+      return x0 + pos.widthBars * pxPerBar;
+    };
 
     const onDown = e => {
       if (this.drawingMode) return;
       const pos = this._positions.find(p => p.id === posId);
       if (!pos) return;
-      // Don't drag if locked
       if (pos.locked) return;
-      // Don't drag if the panel isn't open — a click with no panel showing
-      // is a request to reopen it, not to move the position
       if (!this._getPosPanel(posId)) return;
       const rect = chartEl.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const tol = 10;
+      const tolY = 10, tolX = 8;
+
+      // Check right-edge resize handle first (x proximity)
+      const rex = rightEdgeX(pos);
+      if (rex !== null && Math.abs(mx - rex) < tolX) {
+        const tpY  = this._priceToPixel(pos.tpPrice);
+        const slY  = this._priceToPixel(pos.slPrice);
+        if (tpY !== null && slY !== null) {
+          const top = Math.min(tpY, slY), bot = Math.max(tpY, slY);
+          if (my >= top - tolX && my <= bot + tolX) {
+            dragging = 'width';
+            e.stopPropagation(); e.preventDefault();
+            this.chart.applyOptions({ handleScale:{mouseWheel:false,pinch:false}, handleScroll:{mouseWheel:false,pressedMouseMove:false} });
+            pos._dragging = dragging;
+            return;
+          }
+        }
+      }
+
+      // Price-level drag handles
       const entY = this._priceToPixel(pos.entryPrice);
       const slY  = this._priceToPixel(pos.slPrice);
       const tpY  = this._priceToPixel(pos.tpPrice);
-      if (tpY !== null && Math.abs(my - tpY) < tol) dragging = 'tp';
-      else if (slY !== null && Math.abs(my - slY) < tol) dragging = 'sl';
-      else if (entY !== null && Math.abs(my - entY) < tol) dragging = 'entry';
+      if (tpY  !== null && Math.abs(my - tpY)  < tolY) dragging = 'tp';
+      else if (slY  !== null && Math.abs(my - slY)  < tolY) dragging = 'sl';
+      else if (entY !== null && Math.abs(my - entY) < tolY) dragging = 'entry';
       if (!dragging) return;
       e.stopPropagation();
       e.preventDefault();
@@ -1800,13 +1889,39 @@ class ChartPane {
       const pos = this._positions.find(p => p.id === posId);
       if (!pos) return;
       const rect = chartEl.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+
+      if (dragging === 'width') {
+        const c = this.candles;
+        if (!c || c.length < 2) return;
+        const lastX = this.chart.timeScale().timeToCoordinate(c[c.length - 1].time);
+        const prevX = this.chart.timeScale().timeToCoordinate(c[c.length - 2].time);
+        if (lastX === null || prevX === null) return;
+        const pxPerBar = Math.abs(lastX - prevX);
+        if (pxPerBar < 0.5) return;
+
+        // Resolve x0 with off-screen extrapolation
+        let x0 = 0;
+        if (pos.startTime) {
+          const px = this.chart.timeScale().timeToCoordinate(pos.startTime);
+          if (px !== null) {
+            x0 = px;
+          } else {
+            const barMs = c[c.length - 1].time - c[c.length - 2].time;
+            if (barMs > 0) x0 = lastX + ((pos.startTime - c[c.length - 1].time) / barMs) * pxPerBar;
+          }
+        }
+        pos.widthBars = Math.max(3, Math.round((mx - x0) / pxPerBar));
+        this._renderAllPositions();
+        return;
+      }
+
       const newPrice = this._pixelToPrice(e.clientY - rect.top);
       if (newPrice === null) return;
-
       if (dragging === 'tp') {
-        pos.tpPrice = newPrice;   // TP moves freely — SL untouched
+        pos.tpPrice = newPrice;
       } else if (dragging === 'sl') {
-        pos.slPrice = newPrice;   // SL moves freely — TP untouched
+        pos.slPrice = newPrice;
       } else if (dragging === 'entry') {
         const slDiff = pos.entryPrice - pos.slPrice;
         const tpDiff = pos.tpPrice - pos.entryPrice;
@@ -1815,7 +1930,19 @@ class ChartPane {
         pos.tpPrice = newPrice + tpDiff;
       }
       this._renderAllPositions();
-      this._updatePosPanel(posId);  // live-update the info panel
+      this._updatePosPanel(posId);
+    };
+
+    const onMove_cursor = e => {
+      if (dragging) return;
+      const pos = this._positions.find(p => p.id === posId);
+      if (!pos || pos.locked) return;
+      const rect = chartEl.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const rex = rightEdgeX(pos);
+      if (rex !== null && Math.abs(mx - rex) < 8) {
+        chartEl.style.cursor = 'ew-resize';
+      }
     };
 
     const onUp = e => {
@@ -1831,6 +1958,7 @@ class ChartPane {
 
     chartEl.addEventListener('mousedown', onDown);
     chartEl.addEventListener('mousemove', onMove);
+    chartEl.addEventListener('mousemove', onMove_cursor);
     chartEl.addEventListener('mouseup', onUp);
     chartEl.addEventListener('mouseleave', onUp);
   }
@@ -2925,6 +3053,8 @@ class ChartPane {
         entryPrice: p.entryPrice,
         slPrice:    p.slPrice,
         tpPrice:    p.tpPrice,
+        startTime:  p.startTime  || 0,
+        widthBars:  p.widthBars  || 20,
         locked:     p.locked     || false,
         _calcAcct:  p._calcAcct  || 10000,
         _calcRisk:  p._calcRisk  || 1,
@@ -3048,6 +3178,8 @@ class ChartPane {
       entryPrice: saved.entryPrice,
       slPrice:    saved.slPrice,
       tpPrice:    saved.tpPrice,
+      startTime:  saved.startTime || 0,
+      widthBars:  saved.widthBars || 20,
       locked:     saved.locked || false,
       _dragging:  null,
       _calcAcct:  saved._calcAcct  || 10000,
