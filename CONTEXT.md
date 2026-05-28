@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: session adding Order Blocks indicator, popout flyouts, live candle advance, timezone picker, bar spacing persistence, right-side offset_
+_Last updated: session adding candle colour config, long/short position block improvements, drawing tool lock, vline panel fix, state restore deduplication fix_
 
 ---
 
@@ -66,31 +66,38 @@ joshua_terminal/
 - ✅ **Connection status dots** — HL, YF, OANDA dots in topbar; OANDA lights green on first price tick
 - ✅ **Live candle advance** — `onPriceUpdate()` detects when the current bar's interval has elapsed and opens a new candle with the correct boundary timestamp instead of continuing to update the old bar. `_intervalToMs()` helper maps all 12 interval strings.
 
+### Candle Colour Configuration
+- ✅ **Configurable candle colours** — Bull Fill, Bull Border, Bull Wick, Bear Fill, Bear Border, Bear Wick
+- ✅ Colour pickers in the **Drawing Tools (DRAW) flyout** under "CANDLE STYLE" section
+- ✅ Bull Fill and Bear Fill have a **⊘ transparent toggle** — makes candle bodies hollow (outline/bar candles)
+- ✅ Changes apply **live** to all open panes simultaneously as the colour wheel is dragged
+- ✅ Persisted to `localStorage` under key `candleColors` (global, shared by all panes)
+- ✅ Reset Defaults button restores original green/red
+- ✅ `_defaultCandleColors()` — returns defaults; `_loadCandleColors()` — reads from localStorage with merge; `applyCandleColors(colors)` — persists + applies via `candleSeries.applyOptions()`
+- ⚠️ LWC does not accept `'transparent'` as a colour value — `applyCandleColors` resolves transparent → `'rgba(0,0,0,0)'` before passing to LWC
+
 ### Timezone
 - ✅ **Chart timezone picker** — 🕐 button in topbar opens a flyout with 8 timezone options (UTC, NY, London, Frankfurt, Dubai, Singapore, Tokyo, Sydney)
 - ✅ Selection persists via `localStorage` key `chartTimezone`
 - ✅ Applies to **all open panes** simultaneously via `pane.applyTimezone(tz)`
 - ✅ New panes and popouts read `chartTimezone` from localStorage on init — always open in the saved timezone
-- ✅ **Bottom axis labels** controlled by `tickMarkFormatter` on `timeScale` — receives raw UTC timestamp, formats in target tz via `Intl`. This is the correct LWC v4 API for axis labels.
+- ✅ **Bottom axis labels** controlled by `tickMarkFormatter` on `timeScale` — receives raw UTC timestamp, formats in target tz via `Intl`
 - ✅ **Crosshair tooltip** controlled by `localization.timeFormatter` — separate formatter, same tz logic
 - ✅ **Ticker time** in pane toolbar uses `toLocaleString()` with the saved tz
-- ✅ `_makeTickMarkFormatter(tz)` — handles Year/Month/DayOfMonth/Time tick types
-- ✅ `_makeTzFormatter(tz)` — formats crosshair timestamps
-- ⚠️ Do NOT use timestamp-shifting to implement timezone. LWC renders axis using browser local time from raw timestamps — shifting causes mismatch between axis and crosshair. Use `tickMarkFormatter` + `timeFormatter` only.
+- ⚠️ Do NOT use timestamp-shifting to implement timezone. Use `tickMarkFormatter` + `timeFormatter` only.
 
 ### Chart View Persistence
 - ✅ **Bar spacing (candle width) persisted per symbol** — `localStorage` key `barSpacing:SYMBOL`
 - ✅ Auto-saved on every zoom/scroll via `subscribeVisibleLogicalRangeChange`
-- ✅ Restored on every `_renderCandles()` call — survives timeframe switches, symbol switches, and page reload
-- ✅ **Right-side offset** — `_applyRightOffset(bars=15)` extends the visible range 15 bars past the last candle on every data load so the last candle is never flush against the price scale
+- ✅ Restored on every `_renderCandles()` call
+- ✅ **Right-side offset** — `_applyRightOffset(bars=15)` extends the visible range 15 bars past the last candle on every data load
 
 ### Pine Script Converter Tool
 - ✅ Standalone HTML tool served at `http://localhost:5050/tools/pine-converter`
-- ✅ Calls Anthropic API directly from browser (`claude-sonnet-4-5`) with `anthropic-dangerous-direct-browser-access: true`
+- ✅ Calls Anthropic API directly from browser (`claude-sonnet-4-5`)
 - ✅ API key stored in `localStorage` as `joshua_anthropic_key`
-- ✅ Output tabs: `indicators.js` function, `INDICATOR_DEFS` entry, `_addIndicator` case, `_addSubPane` case, Notes
-- ⚠️ Converter generates correct **math** but may hallucinate rendering APIs for complex visual types (boxes, canvas). Always validate `_addIndicator` case against actual pane.js patterns before use.
-- ⚠️ `_addIndicator(id)` receives only a string ID — there is NO `indicator` object or `indicator.params`. Use hardcoded defaults directly in the case, matching all other indicators in the codebase.
+- ⚠️ Converter generates correct **math** but may hallucinate rendering APIs for complex visual types. Always validate against actual pane.js patterns.
+- ⚠️ `_addIndicator(id)` receives only a string ID — there is NO `indicator` object or `indicator.params`. Use hardcoded defaults directly.
 
 ### Indicators (27+, all client-side maths in indicators.js)
 - ✅ SMA 20/50/200, EMA 20/50/200, VWAP, VWMA 20 (overlay)
@@ -102,32 +109,49 @@ joshua_terminal/
 
 ### Order Blocks Indicator
 - ✅ Added to `indicators.js` as `orderBlocks(data, inputRange, showBearishBOS, showBullishBOS, useMitigatedBlocks)`
-- ✅ Detects Break of Structure (BOS) using rolling highest/lowest over `inputRange` bars
-- ✅ Returns `{ bullishBlocks, bearishBlocks, bosLines }` — all mitigated blocks tracked
-- ✅ Rendered via `_obCanvas` overlay (z-index 8) — `_initObCanvas()` / `_obRender()`
-- ✅ Bearish OBs: gold fill (`rgba(219,166,50,0.07)`) with gold border, `OB ▼` label
-- ✅ Bullish OBs: green fill (`rgba(192,230,174,0.07)`) with green border, `OB ▲` label
-- ✅ Mitigated blocks fade to grey (`rgba(207,203,202,0.08)`)
-- ✅ BOS lines: dashed horizontal, colour-coded red/green, `BOS` label
-- ✅ Blocks extend to canvas right edge (matches Pine Script `extend.right` behaviour)
-- ✅ Sentinel: `'__ob_canvas__'` in `indicatorSeries` — cleaned up in `_removeIndicator()`
-- ✅ Screenshot compositing: `_obCanvas` drawn before trendline/position canvases in `_takeScreenshot()`
-- ⚠️ Parameters (inputRange, BOS visibility, mitigated blocks) are hardcoded defaults — no params UI yet
+- ✅ Rendered via `_obCanvas` overlay (z-index 8)
+- ✅ Bearish OBs: gold fill with gold border; Bullish OBs: green fill with green border; Mitigated: grey
+- ✅ BOS lines: dashed horizontal, colour-coded
+- ⚠️ Parameters hardcoded — no params UI yet
 
 ### Drawing Tools (all in pane.js)
-- ✅ Fibonacci retracement, Trendlines, Horizontal lines, Vertical lines
-- ✅ Long/Short position blocks with live risk calculator
+- ✅ Fibonacci retracement
+- ✅ Trendlines — click to select/show panel, drag endpoints to adjust; **lock** prevents accidental moves
+- ✅ Horizontal lines — click to select/show panel, drag to reposition, price alert toggle; **lock** support
+- ✅ Vertical lines — click to select/show panel, drag to reposition; **lock** support; fixed panel crash bug
+- ✅ Long/Short position blocks — see section below
 - ✅ Clear All Drawings action
 - ✅ Auto-exit drawing mode after placement
-- ✅ Drawing flyout auto-closes after any tool completes
+- ✅ **Lock toggle (🔓/🔒)** on trendline, hline, vline, and position panels — prevents dragging; persisted in save state
+- ✅ **Click any line to reopen its panel** — panel shows on mousedown hit (not only after drag)
+
+#### Long/Short Position Blocks
+- ✅ Draw by clicking entry price and dragging to stop loss — TP auto-set at 1:1 R:R
+- ✅ **Bounded rectangular block** anchored to entry candle's time position (not full canvas width)
+- ✅ `startTime` captured at mousedown → block x-origin = `timeToCoordinate(startTime)`
+- ✅ `widthBars` (default 20) controls block width in bars — right-edge drag handle to resize
+- ✅ Block x-position **extrapolates correctly** when startTime scrolls off-screen left (same pattern as trendlines)
+- ✅ TP block (green), SL block (red), Entry/TP/SL horizontal lines with price labels
+- ✅ Pip labels inside blocks
+- ✅ **Lock toggle** — locked positions cannot be dragged (panel still opens for inspection/delete)
+- ✅ **Panel restores on page load** — always shown collapsed after restore; click to expand
+- ✅ **Click-to-reopen** — clicking a position line when panel is closed reopens it without moving the position
+- ✅ Risk calculator in panel: account $, risk %, lot size → risk $, lots, units, TP $
+- ✅ Calc inputs persist across panel rebuilds and save/restore cycles
+- ✅ `startTime`, `widthBars`, `locked`, `_calcAcct`, `_calcRisk`, `_calcLotSz` all persisted in state
+
+#### Candle Style in DRAW flyout
+- ✅ "CANDLE STYLE" section at bottom of DRAW flyout
+- ✅ 6 colour pickers: Bull Fill, Bull Border, Bull Wick, Bear Fill, Bear Border, Bear Wick
+- ✅ ⊘ transparent toggle on Bull Fill and Bear Fill for hollow/outline candle style
+- ✅ ↺ Reset Defaults button
 
 ### Popout Window (popout.html)
-- ✅ Full indicator flyout — `openFlyout()` dynamically builds from `window.INDICATOR_DEFS`
-- ✅ Full drawing tools flyout — `openDrawFlyout()` with all 6 tools + Clear All
-- ✅ Both flyouts share `flyout-backdrop` and close on backdrop click
-- ✅ **Live price routing** — `socket.on('hl_mids')`, `socket.on('oanda_price')`, `socket.on('yf_price')` all wired to `pane.onPriceUpdate()` (mirrors app.js — popout does not load app.js)
-- ✅ Timezone, bar spacing, right offset all work identically in popout (read from same localStorage)
-- ⚠️ Flyout panels (`indicator-flyout`, `drawing-flyout`, `flyout-backdrop`) are embedded directly in `popout.html` — they are NOT inherited from `index.html`
+- ✅ Full indicator flyout and drawing tools flyout
+- ✅ Live price routing via socket handlers (mirrors app.js)
+- ✅ Timezone, bar spacing, right offset all work identically
+- ⚠️ Flyout panels are embedded directly in `popout.html` — not inherited from `index.html`
+- ⚠️ Candle colour section in DRAW flyout is in `app.js openDrawFlyout()` — popout.html has its own `openDrawFlyout()` and needs equivalent wiring if candle colour is needed in popout
 
 ### Alert System
 - ✅ `alert_engine.js` — generic singleton, 60s cooldown per level
@@ -144,7 +168,8 @@ joshua_terminal/
 - ✅ Chart timezone saved globally (`chartTimezone`)
 - ✅ Custom fib levels saved per symbol
 - ✅ Save button with amber pulsing dot for unsaved changes
-- ✅ Auto-restore on page load / interval switch / symbol switch
+- ✅ **`_drawingsRestored` flag** — drawings restore runs **once per symbol load only**; interval switches re-run indicator restore but skip drawing restore to prevent duplication
+- ✅ `_drawingsRestored` resets in `_changeSymbol()` so new symbol gets fresh drawing restore
 - ✅ Saved States manager (💾 topbar button)
 
 ---
@@ -168,13 +193,6 @@ pane.js → socket.emit('subscribe_yf', {symbol})
 → pane.js onPriceUpdate() → bar advance check → ticker update + hline alert check
 ```
 
-### Popout price routing
-```
-socket.on('hl_mids' / 'oanda_price' / 'yf_price')
-→ popout.html inline handlers (normalised symbol match)
-→ pane.onPriceUpdate()
-```
-
 ---
 
 ## Key Implementation Details
@@ -189,28 +207,46 @@ socket.on('hl_mids' / 'oanda_price' / 'yf_price')
 - `applyTheme(chartBg, chartText, subText)` — updates LWC layout options on all sub-panes
 - `applyTimezone(tz)` — updates `tickMarkFormatter` + `timeFormatter` on all charts/subpanes
 
+### Candle colour implementation
+- `_defaultCandleColors()` — returns `{ bullFill, bullBorder, bullWick, bearFill, bearBorder, bearWick }` with original green/red
+- `_loadCandleColors()` — reads `candleColors` from localStorage, merges with defaults (safe against partial data)
+- `applyCandleColors(colors)` — persists to localStorage, resolves `'transparent'` → `'rgba(0,0,0,0)'`, calls `candleSeries.applyOptions()`
+- `_initChart()` calls `_loadCandleColors()` and applies on construction
+
+### Position block rendering
+- `_drawPosOnCanvas(ctx, pos, alpha, dragging)` — draws bounded TP/SL blocks + price lines
+- x0 computed from `timeToCoordinate(pos.startTime)` with off-screen extrapolation using `lastX + ((t - lastCandleTime) / barMs) * pxPerBar`
+- x1 = x0 + `pos.widthBars * pxPerBar`
+- Right-edge resize handle: 4px grip bar at x1 with dot markers; hover = `ew-resize` cursor; drag recalculates `widthBars`
+- `_attachPosDragHandles(posId)` handles: tp / sl / entry price drag + width resize drag + locked guard
+
+### State restore deduplication (CRITICAL)
+- `_restoreState()` is called on every `_loadData()` completion — including interval switches
+- `_drawingsRestored` boolean flag prevents drawing restore from running more than once per symbol
+- Without this flag, interval switches would duplicate all positions, fibs, trendlines etc. in memory
+- `_changeSymbol()` resets `_drawingsRestored = false` so the new symbol restores correctly
+
+### Drawing tool line panels
+- All three line types (trendline, hline, vline) show their edit panel **on mousedown hit** (not only after drag)
+- This means: click a line → panel opens; click elsewhere → panel closes; click line again → panel reopens
+- Locked lines still open their panel on click — they just can't be dragged
+- Guard: `e.target.closest('.trend-edit-panel, .fib-edit-panel, .pos-panel')` prevents panel clicks from propagating to `_trendMouseDown`
+
+### Vline panel fix
+- Old `_vlineShowPanel` had a copy-paste bug referencing `h.alert` and `h` (from hline context) — caused a silent ReferenceError, panel never appeared
+- Fixed: vline panel no longer has an alert section; uses only colour swatches + lock + delete
+
 ### Canvas-rendered indicators (pane.js pattern)
-Indicators requiring filled zones use a dedicated `<canvas>` layer:
 - Create in `_init<Name>Canvas()`, append to `chartEl`, appropriate z-index
 - Subscribe to `timeScale().subscribeVisibleLogicalRangeChange()` + `subscribeCrosshairMove()`
 - Use `timeScale().timeToCoordinate(t)` for X, `candleSeries.priceToCoordinate(p)` for Y
-- Store canvas ref as `this._<name>Canvas`, data as `this._<name>Data`
-- Sentinel string in `indicatorSeries` (e.g. `'__ob_canvas__'`) — cleaned up in `_removeIndicator()`
+- Sentinel string in `indicatorSeries` — cleaned up in `_removeIndicator()`
 - Add canvas to screenshot compositing in `_takeScreenshot()` before trendline canvas
 
 ### Timezone implementation (CRITICAL — do not revert)
-- **Axis labels**: `timeScale().applyOptions({ tickMarkFormatter })` — receives raw UTC unix timestamp, formats in target tz
-- **Crosshair**: `chart.applyOptions({ localization: { timeFormatter } })` — same approach
+- **Axis labels**: `timeScale().applyOptions({ tickMarkFormatter })`
+- **Crosshair**: `chart.applyOptions({ localization: { timeFormatter } })`
 - **DO NOT shift timestamps** — shifting causes axis/crosshair mismatch across different browser timezones
-- `_makeTickMarkFormatter(tz)` handles all 5 LWC tick types (Year/Month/Day/Time/TimeWithSeconds)
-
-### Live candle bar advance
-`onPriceUpdate()` checks `Date.now()` against `last.time + intervalMs` on every tick. If elapsed, calculates the correct new bar boundary time using `Math.floor((nowSec - last.time) / barDurSec) * barDurSec + last.time` to handle gaps. `_intervalToMs()` maps 12 interval strings.
-
-### Bar spacing persistence
-- `_saveBarSpacing()` — called on every `subscribeVisibleLogicalRangeChange`, saves `timeScale().options().barSpacing` to `localStorage`
-- `_loadBarSpacing()` — called in `_renderCandles()`, restores spacing or falls back to `fitContent()`
-- `_applyRightOffset(bars=15)` — extends visible range 15 bars past last candle on every render
 
 ### alert_engine.js
 - Cooldown map keyed by `symbol:level:direction` — 60s silence after firing
@@ -223,6 +259,10 @@ Indicators requiring filled zones use a dedicated `<canvas>` layer:
 ### state_store.js
 - Key schema: `cs:EURUSD`
 - Blob: `{ drawings: {fibs, trendlines, hlines, vlines, positions}, indicators: {"15m": [...]}, fibLevels: [...], savedAt }`
+- Position blob fields: `id, side, entryPrice, slPrice, tpPrice, startTime, widthBars, locked, _calcAcct, _calcRisk, _calcLotSz`
+- Trendline blob fields: `id, color, locked, ptA, ptB`
+- Hline blob fields: `id, price, color, alert, locked`
+- Vline blob fields: `id, time, color, locked`
 
 ---
 
@@ -234,6 +274,7 @@ Indicators requiring filled zones use a dedicated `<canvas>` layer:
 | `theme` | `'dark'` or `'light'` | app.js |
 | `chartTimezone` | IANA tz string e.g. `'America/New_York'` | app.js |
 | `barSpacing:SYMBOL` | number (pixels per bar) | pane.js |
+| `candleColors` | JSON `{ bullFill, bullBorder, bullWick, bearFill, bearBorder, bearWick }` | pane.js |
 | `paneLayout_N` | JSON pane config array | app.js |
 | `chartCount` | number | app.js |
 | `joshua_anthropic_key` | API key string | pine-converter.html |
@@ -259,6 +300,7 @@ TELEGRAM_CHAT_ID=-123456789  # group chat IDs are negative
 - [ ] **Notes export** — download all notes as CSV or PDF
 - [ ] **More indicators** — custom periods, additional oscillators
 - [ ] **Pine converter improvements** — add Joshua Terminal rendering context to system prompt
+- [ ] **Candle colours in popout** — popout.html has its own `openDrawFlyout()` that needs the candle style section wired up
 
 ---
 
@@ -269,7 +311,9 @@ TELEGRAM_CHAT_ID=-123456789  # group chat IDs are negative
 - Browser cache is aggressive — always do a full cache clear (last 24hrs) if changes don't appear after hard refresh
 - Telegram group chat IDs are negative numbers — a common gotcha
 - Canvas-rendered indicators (`_sdCanvas`, `_obCanvas`) are recomputed from candle data on every load — no special save/restore logic needed
-- `_addIndicator(id)` receives only a string ID — no `indicator.params` object exists. Converter output that references `indicator.params` will throw a silent ReferenceError — always replace with hardcoded defaults.
+- `_addIndicator(id)` receives only a string ID — no `indicator.params` object exists
+- LWC `timeToCoordinate()` returns `null` for timestamps outside the visible range — always extrapolate using pixel-per-bar rather than falling back to 0
+- Position block `startTime` may be off-screen left as chart scrolls forward — extrapolation in `_drawPosOnCanvas` and drag handlers handles this correctly
 
 ---
 
