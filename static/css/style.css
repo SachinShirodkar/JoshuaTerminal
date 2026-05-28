@@ -1058,6 +1058,13 @@ html, body {
   cursor: pointer; padding: 0 2px; line-height: 1; flex-shrink: 0;
 }
 .trend-edit-close:hover { color: var(--red); }
+.trend-line-lock-btn {
+  background: none; border: none; color: var(--text3); font-size: 12px;
+  cursor: pointer; padding: 0 2px; line-height: 1; flex-shrink: 0;
+  transition: color 0.15s;
+}
+.trend-line-lock-btn:hover  { color: var(--text2); }
+.trend-line-lock-btn.locked { color: var(--gold); }
 .trend-edit-body { padding: 10px; }
 .trend-color-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .trend-color-label { font-size: 9px; letter-spacing: 1.5px; color: var(--text3); flex-shrink: 0; }

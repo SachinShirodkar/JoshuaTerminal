@@ -2623,10 +2623,13 @@ class ChartPane {
     // ── Hline hit / drag ────────────────────────────────
     for (const h of this._hlines) {
       if (this._hlineHit(h, my)) {
-        const lineY = this._trendPriceToY(h.price) ?? my;
-        this._selectedHlineId = h.id;  // select without opening panel yet
+        this._selectedHlineId = h.id;
         this._trendRender();
-        this._hlineDragging = { h, offsetY: my - lineY };
+        this._hlineShowPanel(h.id);   // always show panel on click
+        if (!h.locked) {
+          const lineY = this._trendPriceToY(h.price) ?? my;
+          this._hlineDragging = { h, offsetY: my - lineY };
+        }
         return true;
       }
     }
@@ -2634,10 +2637,13 @@ class ChartPane {
     // ── Vline hit / drag ────────────────────────────────
     for (const v of this._vlines) {
       if (this._vlineHit(v, mx)) {
-        const lineX = this._trendTimeToX(v.time) ?? mx;
-        this._selectedVlineId = v.id;  // select without opening panel yet
+        this._selectedVlineId = v.id;
         this._trendRender();
-        this._vlineDragging = { v, offsetX: mx - lineX };
+        this._vlineShowPanel(v.id);   // always show panel on click
+        if (!v.locked) {
+          const lineX = this._trendTimeToX(v.time) ?? mx;
+          this._vlineDragging = { v, offsetX: mx - lineX };
+        }
         return true;
       }
     }
@@ -2645,16 +2651,16 @@ class ChartPane {
     // Check handles of selected trendline first
     if (this._selectedTrendId) {
       const t = this._trendlines.find(t => t.id === this._selectedTrendId);
-      if (t) {
+      if (t && !t.locked) {
         const ep = this._trendHandleHit(t, mx, my);
         if (ep) { this._trendDragging = { t, ep }; return true; }
       }
     }
-    // Check line body
+    // Check line body — show panel on click
     for (const t of this._trendlines) {
       if (this._trendLineHit(t, mx, my)) { this._trendSelect(t.id); return true; }
     }
-    // Empty click — deselect if something was selected
+    // Empty click — deselect everything and close panels
     if (this._selectedTrendId) { this._trendDeselect(); return true; }
     if (this._selectedHlineId) { this._hlineDeselect(); return true; }
     if (this._selectedVlineId) { this._vlineDeselect(); return true; }
@@ -2770,6 +2776,7 @@ class ChartPane {
     panel.innerHTML =
       '<div class="trend-edit-header">' +
         '<span class="trend-edit-title">TRENDLINE ' + fmt(t.ptA.price) + ' \u2192 ' + fmt(t.ptB.price) + '</span>' +
+        '<button class="trend-line-lock-btn' + (t.locked ? ' locked' : '') + '" title="' + (t.locked ? 'Unlock' : 'Lock') + '">' + (t.locked ? '🔒' : '🔓') + '</button>' +
         '<button class="trend-edit-close">\u2715</button>' +
       '</div>' +
       '<div class="trend-edit-body">' +
@@ -2782,6 +2789,16 @@ class ChartPane {
     chartEl.appendChild(panel);
     panel.style.top = '8px'; panel.style.right = '48px';
     panel.querySelector('.trend-edit-close').onclick = () => this._trendDeselect();
+    const trendLockBtn = panel.querySelector('.trend-line-lock-btn');
+    if (trendLockBtn) {
+      trendLockBtn.onclick = () => {
+        t.locked = !t.locked;
+        trendLockBtn.textContent = t.locked ? '🔒' : '🔓';
+        trendLockBtn.title = t.locked ? 'Unlock' : 'Lock';
+        trendLockBtn.classList.toggle('locked', t.locked);
+        this.markDirty();
+      };
+    }
     panel.querySelector('.trend-btn-delete').onclick = () => {
       this._trendlines = this._trendlines.filter(x => x.id !== id);
       this._trendDeselect();
@@ -2847,6 +2864,7 @@ class ChartPane {
     panel.innerHTML =
       `<div class="trend-edit-header">` +
         `<span class="trend-edit-title">H-LINE  ${h.price.toFixed(dec)}</span>` +
+        `<button class="trend-line-lock-btn ${h.locked ? 'locked' : ''}" title="${h.locked ? 'Unlock' : 'Lock'}">${h.locked ? '🔒' : '🔓'}</button>` +
         `<button class="trend-edit-close">✕</button>` +
       `</div>` +
       `<div class="trend-edit-body">` +
@@ -2864,6 +2882,16 @@ class ChartPane {
     chartEl.appendChild(panel);
     panel.style.top = '8px'; panel.style.right = '48px';
     panel.querySelector('.trend-edit-close').onclick = () => this._hlineDeselect();
+    const hlineLockBtn = panel.querySelector('.trend-line-lock-btn');
+    if (hlineLockBtn) {
+      hlineLockBtn.onclick = () => {
+        h.locked = !h.locked;
+        hlineLockBtn.textContent = h.locked ? '🔒' : '🔓';
+        hlineLockBtn.title = h.locked ? 'Unlock' : 'Lock';
+        hlineLockBtn.classList.toggle('locked', h.locked);
+        this.markDirty();
+      };
+    }
     panel.querySelector('.trend-btn-delete').onclick = () => {
       this._hlines = this._hlines.filter(x => x.id !== id);
       this._hlineDeselect();
@@ -2947,18 +2975,12 @@ class ChartPane {
     panel.innerHTML =
       `<div class="trend-edit-header">` +
         `<span class="trend-edit-title">V-LINE  ${dateStr}</span>` +
+        `<button class="trend-line-lock-btn ${v.locked ? 'locked' : ''}" title="${v.locked ? 'Unlock' : 'Lock'}">${v.locked ? '🔒' : '🔓'}</button>` +
         `<button class="trend-edit-close">✕</button>` +
       `</div>` +
       `<div class="trend-edit-body">` +
         `<div class="trend-color-row"><span class="trend-color-label">COLOUR</span>` +
           `<div class="trend-color-swatches">${swatches}</div></div>` +
-        `<div class="trend-alert-row">` +
-          `<span class="trend-color-label">ALERT</span>` +
-          `<button class="btn-hline-alert ${h.alert ? 'active' : ''}" title="Toggle price alert">` +
-            `${h.alert ? '🔔' : '🔕'}` +
-          `</button>` +
-          `<span class="hline-alert-status">${h.alert ? 'Armed' : 'Off'}</span>` +
-        `</div>` +
         `<div class="trend-edit-actions"><button class="trend-btn-delete">Delete</button></div>` +
       `</div>`;
     chartEl.appendChild(panel);
@@ -2967,6 +2989,14 @@ class ChartPane {
     panel.querySelector('.trend-btn-delete').onclick = () => {
       this._vlines = this._vlines.filter(x => x.id !== id);
       this._vlineDeselect();
+      this.markDirty();
+    };
+    const lockBtn = panel.querySelector('.trend-line-lock-btn');
+    lockBtn.onclick = () => {
+      v.locked = !v.locked;
+      lockBtn.textContent = v.locked ? '🔒' : '🔓';
+      lockBtn.title = v.locked ? 'Unlock' : 'Lock';
+      lockBtn.classList.toggle('locked', v.locked);
       this.markDirty();
     };
     panel.querySelectorAll('.trend-swatch').forEach(btn => {
@@ -3036,16 +3066,17 @@ class ChartPane {
         priceB: f.priceB,
       })),
       trendlines: this._trendlines.map(t => ({
-        id:    t.id,
-        color: t.color,
-        ptA:   { price: t.ptA.price, time: t.ptA.time },
-        ptB:   { price: t.ptB.price, time: t.ptB.time },
+        id:     t.id,
+        color:  t.color,
+        locked: t.locked || false,
+        ptA:    { price: t.ptA.price, time: t.ptA.time },
+        ptB:    { price: t.ptB.price, time: t.ptB.time },
       })),
       hlines: this._hlines.map(h => ({
-        id: h.id, price: h.price, color: h.color, alert: h.alert || false,
+        id: h.id, price: h.price, color: h.color, alert: h.alert || false, locked: h.locked || false,
       })),
       vlines: this._vlines.map(v => ({
-        id: v.id, time: v.time, color: v.color,
+        id: v.id, time: v.time, color: v.color, locked: v.locked || false,
       })),
       positions: this._positions.map(p => ({
         id:         p.id,
@@ -3150,21 +3181,22 @@ class ChartPane {
 
   _restoreTrendline(saved) {
     this._trendlines.push({
-      id:    saved.id,
-      color: saved.color || '#00c8ff',
-      ptA:   { price: saved.ptA.price, time: saved.ptA.time },
-      ptB:   { price: saved.ptB.price, time: saved.ptB.time },
+      id:     saved.id,
+      color:  saved.color || '#00c8ff',
+      locked: saved.locked || false,
+      ptA:    { price: saved.ptA.price, time: saved.ptA.time },
+      ptB:    { price: saved.ptB.price, time: saved.ptB.time },
     });
     this._trendRender();
   }
 
   _restoreHline(saved) {
-    this._hlines.push({ id: saved.id, price: saved.price, color: saved.color || '#00c8ff', alert: saved.alert || false });
+    this._hlines.push({ id: saved.id, price: saved.price, color: saved.color || '#00c8ff', alert: saved.alert || false, locked: saved.locked || false });
     this._trendRender();
   }
 
   _restoreVline(saved) {
-    this._vlines.push({ id: saved.id, time: saved.time, color: saved.color || '#00c8ff' });
+    this._vlines.push({ id: saved.id, time: saved.time, color: saved.color || '#00c8ff', locked: saved.locked || false });
     this._trendRender();
   }
 
