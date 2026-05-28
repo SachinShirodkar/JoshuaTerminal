@@ -242,6 +242,10 @@ class ChartPane {
       borderDownColor: cc.bearBorder,
       wickUpColor:     cc.bullWick,
       wickDownColor:   cc.bearWick,
+      priceLineVisible:  true,
+      lastValueVisible:  true,
+      priceLineColor:    '#ffffff',
+      priceLineWidth:    1,
     });
 
     // Track ongoing resize (after chart is created)
@@ -470,7 +474,30 @@ class ChartPane {
 
   _renderCandles() {
     const last = this.candles[this.candles.length - 1];
-    if (last) this.currentPrice = last.close;  // set before _symbolPriceFormat
+    if (last) this.currentPrice = last.close;
+
+    // ── Recreate the candleSeries on every render ─────────────────────────────
+    // LWC v4 can get confused about bar spacing when setData() is called with a
+    // completely different time interval on an existing series (e.g. 15m → 4h).
+    // Removing and recreating the series forces LWC to infer the new bar spacing
+    // cleanly from the incoming timestamps, eliminating candle alignment gaps.
+    if (this.candleSeries) {
+      try { this.chart.removeSeries(this.candleSeries); } catch(e) {}
+    }
+    const cc = this._loadCandleColors();
+    const _r = v => (v === 'transparent' ? 'rgba(0,0,0,0)' : v);
+    this.candleSeries = this.chart.addCandlestickSeries({
+      upColor:          _r(cc.bullFill),
+      downColor:        _r(cc.bearFill),
+      borderUpColor:    cc.bullBorder,
+      borderDownColor:  cc.bearBorder,
+      wickUpColor:      cc.bullWick,
+      wickDownColor:    cc.bearWick,
+      priceLineVisible: true,
+      lastValueVisible: true,
+      priceLineColor:   '#ffffff',
+      priceLineWidth:   1,
+    });
 
     const { precision, minMove } = this._symbolPriceFormat();
     this.candleSeries.applyOptions({
@@ -479,47 +506,50 @@ class ChartPane {
 
     this.candleSeries.setData(this.candles);
 
-    // Restore saved barSpacing for this symbol, or fitContent for first load
     const savedSpacing = this._loadBarSpacing();
     if (savedSpacing) {
       this.chart.timeScale().applyOptions({ barSpacing: savedSpacing });
-      // Scroll so the last candle has a comfortable right-side offset
-      this._applyRightOffset();
+      requestAnimationFrame(() => this._applyRightOffset());
     } else {
       this.chart.timeScale().fitContent();
-      this._applyRightOffset();
+      requestAnimationFrame(() => this._applyRightOffset());
     }
 
     if (last) this._updateTicker(last.close, last.close, 0, 0, 'up');
   }
 
-  // Apply a default right-side gap so the last candle isn't flush against the price scale
+  // Apply a right-side gap so the last candle isn't flush against the price scale.
+  // Uses ~8% of the visible range width rather than a fixed bar count,
+  // so the gap looks consistent across all timeframes and zoom levels.
   _applyRightOffset(bars = 15) {
     try {
       const ts    = this.chart.timeScale();
       const range = ts.getVisibleLogicalRange();
       if (!range) return;
-      const len = this.candles.length;
+      const len     = this.candles.length;
+      const visible = range.to - range.from;
+      // Use 8% of visible range (min 3, max 30 bars) for a consistent visual gap
+      const offset  = Math.min(30, Math.max(3, Math.round(visible * 0.08)));
       ts.setVisibleLogicalRange({
         from: range.from,
-        to:   len - 1 + bars,
+        to:   len - 1 + offset,
       });
     } catch(e) {}
   }
 
-  // Persist barSpacing to localStorage keyed by symbol
+  // Persist barSpacing to localStorage keyed by symbol + interval
   _saveBarSpacing() {
     try {
       const spacing = this.chart.timeScale().options().barSpacing;
       if (spacing && spacing > 0) {
-        localStorage.setItem(`barSpacing:${this.symbol}`, spacing);
+        localStorage.setItem(`barSpacing:${this.symbol}:${this.interval}`, spacing);
       }
     } catch(e) {}
   }
 
   _loadBarSpacing() {
     try {
-      const v = parseFloat(localStorage.getItem(`barSpacing:${this.symbol}`));
+      const v = parseFloat(localStorage.getItem(`barSpacing:${this.symbol}:${this.interval}`));
       return isNaN(v) ? null : v;
     } catch(e) { return null; }
   }
@@ -557,6 +587,10 @@ class ChartPane {
       borderDownColor: colors.bearBorder,
       wickUpColor:     colors.bullWick,
       wickDownColor:   colors.bearWick,
+      priceLineVisible: true,
+      lastValueVisible: true,
+      priceLineColor:   '#ffffff',
+      priceLineWidth:   1,
     });
   }
 

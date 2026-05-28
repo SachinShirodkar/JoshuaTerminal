@@ -117,8 +117,14 @@ def oanda_get_candles(symbol: str, interval: str = "15m", limit: int = 300) -> l
         "granularity": granularity,
         "count":       remaining,
         "price":       "M",   # midpoint candles (bid+ask average)
+        "smooth":      "false",
     }
 
+    # OANDA returns only complete candles by default when using 'count'.
+    # To also get the currently-forming bar, make a second request for
+    # the single most-recent candle (complete=false included implicitly
+    # when requesting from a from= time in the future, but the simplest
+    # approach is to fetch count=1 with no filter and append it).
     try:
         r = requests.get(url, headers=_oanda_headers(), params=params, timeout=10)
 
@@ -136,8 +142,6 @@ def oanda_get_candles(symbol: str, interval: str = "15m", limit: int = 300) -> l
         data = r.json()
 
         for c in data.get("candles", []):
-            if not c.get("complete", True):
-                continue   # skip the still-forming candle
             mid = c.get("mid", {})
             try:
                 ts = datetime.strptime(c["time"][:19], "%Y-%m-%dT%H:%M:%S")
@@ -152,6 +156,46 @@ def oanda_get_candles(symbol: str, interval: str = "15m", limit: int = 300) -> l
                 })
             except (KeyError, ValueError) as e:
                 logger.debug(f"Skipping candle {c}: {e}")
+
+        # ── Fetch the currently-forming (incomplete) candle separately ───────
+        # OANDA's count-based request returns only complete candles.
+        # We request count=1 from the last candle's close time to get the
+        # live bar that is currently forming.
+        if candles:
+            last_complete_time = candles[-1]["time"]
+            from_dt = datetime.fromtimestamp(last_complete_time, tz=timezone.utc)
+            # Request from just after the last complete bar
+            from_str = (from_dt + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+            live_params = {
+                "granularity": granularity,
+                "from":        from_str,
+                "price":       "M",
+                "count":       "1",
+            }
+            try:
+                r2 = requests.get(url, headers=_oanda_headers(), params=live_params, timeout=5)
+                if r2.status_code == 200:
+                    live_data = r2.json()
+                    for c in live_data.get("candles", []):
+                        mid = c.get("mid", {})
+                        try:
+                            ts = datetime.strptime(c["time"][:19], "%Y-%m-%dT%H:%M:%S")
+                            ts = ts.replace(tzinfo=timezone.utc)
+                            t  = int(ts.timestamp())
+                            # Only append if it's a new bar (not a duplicate)
+                            if t > last_complete_time:
+                                candles.append({
+                                    "time":   t,
+                                    "open":   float(mid["o"]),
+                                    "high":   float(mid["h"]),
+                                    "low":    float(mid["l"]),
+                                    "close":  float(mid["c"]),
+                                    "volume": float(c.get("volume", 0)),
+                                })
+                        except (KeyError, ValueError):
+                            pass
+            except Exception:
+                pass  # live bar fetch is best-effort; don't fail the whole request
 
         candles.sort(key=lambda x: x["time"])
         return candles[-limit:]
