@@ -6,7 +6,7 @@ Runs on http://localhost:5050
 import json, threading, time, logging, os
 import websocket as ws_client
 import requests as http_requests
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 import data_source as ds
@@ -457,6 +457,21 @@ def on_connect(): logger.info(f"Browser: {request.sid}")
 def on_disconnect(): logger.info(f"Gone: {request.sid}")
 
 
+# ─── PWA routes ──────────────────────────────────────────────────────────────
+
+@app.route('/manifest.json')
+def pwa_manifest():
+    return send_from_directory(app.root_path, 'manifest.json',
+                               mimetype='application/manifest+json')
+
+@app.route('/service_worker.js')
+def pwa_sw():
+    resp = send_from_directory(app.root_path, 'service_worker.js',
+                               mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
 # ─── Forex pairs list ────────────────────────────────────────────────────────
 # These are displayed in the symbol dropdown and also control what OANDA
 # instruments are offered.  OANDA accepts EUR_USD format; the _oanda_instrument()
@@ -488,10 +503,15 @@ FOREX_PAIRS = {
 }
 
 if __name__ == "__main__":
-    src  = ds.get_active_source()
-    env  = ds.OANDA_ENV if src == "oanda" else ""
-    print("\n  ╔═══════════════════════════════════════════════╗")
-    print(f"  ║  Joshua Terminal   →  http://localhost:5050    ║")
+    src      = ds.get_active_source()
+    env      = ds.OANDA_ENV if src == "oanda" else ""
+    ssl_cert = os.environ.get("SSL_CERT", "")
+    ssl_key  = os.environ.get("SSL_KEY",  "")
+    ssl_ctx  = (ssl_cert, ssl_key) if (ssl_cert and ssl_key and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key)) else None
+    protocol = "https" if ssl_ctx else "http"
+
+    print("\n  ╔" + "═"*47 + "╗")
+    print(f"  ║  Joshua Terminal   →  {protocol}://localhost:5050  ║")
     print(f"  ║  Forex source: {src:<30}║")
     if src == "oanda":
         print(f"  ║  OANDA env:    {env:<30}║")
@@ -500,6 +520,11 @@ if __name__ == "__main__":
     else:
         print("  ║  ⚠  No OANDA key — using yfinance fallback      ║")
         print("  ║     Get a free key: oanda.com (practice acct)   ║")
-    print("  ╚═══════════════════════════════════════════════╝\n")
+    if ssl_ctx:
+        print("  ║  🔒 SSL enabled (PWA standalone mode)           ║")
+    else:
+        print("  ║  ⚠  No SSL — PWA will show browser UI           ║")
+    print("  ╚" + "═"*47 + "╝\n")
     hl_manager.start()
-    socketio.run(app, host="0.0.0.0", port=5050, debug=False, use_reloader=False)
+    socketio.run(app, host="0.0.0.0", port=5050, debug=False,
+                 use_reloader=False, ssl_context=ssl_ctx)

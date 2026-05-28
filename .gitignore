@@ -1,1 +1,6 @@
 .env
+.DS_Store
+static/.DS_Store
+static/js/.DS_Store
+*.sh
+*.pem

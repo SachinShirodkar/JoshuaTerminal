@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/css/style.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#0a0c0f" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 </head>
 <body>
 
@@ -133,5 +136,14 @@
 <script src="/static/js/alert_engine.js"></script>
 <script src="/static/js/pane.js"></script>
 <script src="/static/js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service_worker.js')
+        .then(r => console.log('[SW] registered', r.scope))
+        .catch(e => console.warn('[SW] registration failed', e));
+    });
+  }
+</script>
 </body>
 </html>
