@@ -11,7 +11,10 @@ _Last updated: Snapshot System — Playwright-based headless chart capture repla
 ## Stack
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.9+, Flask, Flask-SocketIO (threading mode), python-dotenv |
+| Backend | Python 3.12 (pinned via uv), Flask, Flask-SocketIO (threading mode), python-dotenv |
+| Dependency mgmt | uv — pyproject.toml + uv.lock (pip/requirements.txt retained for compatibility) |
+| Service (macOS) | launchd — com.joshuaterminal.app.plist |
+| Service (Linux) | systemd — unit file TBD |
 | Frontend | Vanilla JS (no framework), Lightweight Charts v4.1.3 |
 | Forex live prices | OANDA v20 REST + HTTP streaming (primary) |
 | Crypto live prices | Hyperliquid WebSocket (allMids) |
@@ -289,6 +292,7 @@ SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 ---
 
 ## Bucket List (future sessions)
+- [ ] **Linux port** — systemd unit file (Python code and .env are already platform-neutral; uv handles Python + dep parity)
 - [ ] **Web search in analysis** — add `web_search` tool to `client.messages.create()` in `run_analysis.py`
 - [ ] **Telegram inline images** — send PNGs alongside analysis text
 - [ ] **Scheduled auto-run** — scheduler config in `config.py` already exists, needs wiring
@@ -316,11 +320,19 @@ SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 ## Running the App
 ```bash
 cd joshua_terminal
-pip install -r requirements.txt
-pip install playwright && playwright install chromium   # for snapshot system
-cp .env.example .env   # then fill in your keys
-python app.py
+uv sync                              # install/update deps from uv.lock
+uv run playwright install chromium   # once per machine
+cp .env.example .env                 # then fill in your keys
+uv run python app.py
 # → https://localhost:5050 (if SSL certs present) or http://localhost:5050
+```
+
+**As a macOS service (launchd):**
+```bash
+# Edit com.joshuaterminal.app.plist — fill in uv path and project path
+cp com.joshuaterminal.app.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+tail -f ~/Library/Logs/JoshuaTerminal/stderr.log
 ```
 
 Debug: `http://localhost:5050/debug`

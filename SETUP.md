@@ -15,23 +15,41 @@
 
 ## 2. Install Python dependencies
 
+### Recommended: uv
+
+`uv` manages the Python version and all dependencies from a lockfile — no manual `pip install`, no version drift, works identically on macOS and Linux.
+
+**Install uv (once per machine):**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Set up the project:**
+```bash
+cd joshua_terminal
+
+# Pin your Python version (run once — creates .python-version)
+uv python pin 3.12
+
+# Install all dependencies and create the lockfile
+uv sync
+
+# Install Playwright browser (once per machine)
+uv run playwright install chromium
+```
+
+`uv sync` reads `pyproject.toml`, resolves all dependencies, writes `uv.lock`, and creates a `.venv` inside the project folder. Commit both `pyproject.toml` and `uv.lock` to version control — this guarantees identical environments on every machine.
+
+### Alternative: plain pip
+
 ```bash
 cd joshua_terminal
 pip install -r requirements.txt
-```
-
-### For AI analysis snapshots (Playwright)
-
-```bash
 pip install playwright
 playwright install chromium
 ```
 
-> **Note on macOS:** If `playwright` is not on your PATH after install, add this to `~/.zshrc`:
-> ```bash
-> export PATH="$HOME/Library/Python/3.9/bin:$PATH"
-> ```
-> Then `source ~/.zshrc` and run `playwright install chromium`.
+> `requirements.txt` is retained for compatibility but `pyproject.toml` + `uv.lock` are the authoritative dependency source going forward.
 
 ---
 
@@ -82,6 +100,12 @@ SNAPSHOT_KEEP_DAYS=7        # days to keep analysis PNGs (0 = keep forever)
 
 ## 4. Start the terminal
 
+**With uv (recommended):**
+```bash
+uv run python app.py
+```
+
+**Without uv (manual venv or system Python):**
 ```bash
 python app.py
 ```
@@ -252,16 +276,15 @@ mkdir -p ~/Library/Logs/JoshuaTerminal
 
 ### Step 2 — Install the plist
 
-A ready-to-use plist is provided at `com.joshuaterminal.app.plist` in the project root. Before installing it you must edit three placeholders:
+A ready-to-use plist is provided at `com.joshuaterminal.app.plist` in the project root. Before installing it you must edit the placeholders:
 
 | Placeholder | Replace with |
 |---|---|
-| `/usr/local/bin/python3` | Output of `which python3` on your machine |
-| `/Users/YOUR_USERNAME/path/to/joshua-terminal/app.py` | Absolute path to `app.py` |
-| `/Users/YOUR_USERNAME/path/to/joshua-terminal` | Absolute path to the project folder |
+| `/usr/local/bin/uv` | Output of `which uv` on your machine |
+| `/Users/YOUR_USERNAME/path/to/joshua-terminal` | Absolute path to the project folder (appears twice) |
 | `YOUR_USERNAME` in log paths | Your macOS username |
 
-> **Using a virtualenv?** Replace the `python3` path with `/path/to/venv/bin/python3` — that's all you need.
+> **Not using uv?** Replace the entire `ProgramArguments` block with your python3 path and app.py path as in the original non-uv plist.
 
 ```bash
 # Copy to LaunchAgents

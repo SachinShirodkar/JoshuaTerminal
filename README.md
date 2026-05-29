@@ -36,10 +36,19 @@ Includes an integrated AI analysis pipeline that captures your charts (with all 
 
 ### 2. Install dependencies
 
+**With uv (recommended):**
+```bash
+cd joshua_terminal
+uv python pin 3.12        # pin Python version
+uv sync                   # install all deps from pyproject.toml
+uv run playwright install chromium
+```
+
+**Without uv:**
 ```bash
 cd joshua_terminal
 pip install -r requirements.txt
-pip install playwright && playwright install chromium   # for AI analysis snapshots
+pip install playwright && playwright install chromium
 ```
 
 ### 3. Configure environment
@@ -64,7 +73,9 @@ SNAPSHOT_KEEP_DAYS=7                 # optional — days to retain analysis snap
 ### 4. Run
 
 ```bash
-python app.py
+uv run python app.py      # with uv
+# or
+python app.py             # without uv
 ```
 
 Open your browser at **http://localhost:5050**
