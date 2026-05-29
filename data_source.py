@@ -22,10 +22,13 @@ Or paste directly into the constants below.
 import os
 import logging
 import time
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
-load_dotenv()
+# ── Load .env from the project folder (service-safe: does not rely on cwd) ───
+_PROJECT_DIR = Path(__file__).parent
+load_dotenv(_PROJECT_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 
