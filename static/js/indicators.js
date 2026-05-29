@@ -670,12 +670,86 @@ function orderBlocks(data, inputRange = 25, showBearishBOS = false, showBullishB
   return { bullishBlocks: filteredBullish, bearishBlocks: filteredBearish, bosLines };
 }
 
+  // ── Fair Value Gap (LuxAlgo-style) ─────────────────────────────────────────
+  // Detects three-candle imbalance gaps (FVGs) and tracks mitigation.
+  // Returns { bullish: [...], bearish: [...], dynamicBull, dynamicBear }
+  function FairValueGap(data, thresholdPer = 0, autoThreshold = false, showLast = 0, dynamic = false) {
+    if (!data || data.length < 3) return { bullish: [], bearish: [], dynamicBull: null, dynamicBear: null };
+
+    const bullishFVGs = [];
+    const bearishFVGs = [];
+    let maxBullFvg = null, minBullFvg = null;
+    let maxBearFvg = null, minBearFvg = null;
+
+    // Threshold — percentage or auto (average bar range)
+    let thresholdValue = thresholdPer / 100;
+    if (autoThreshold) {
+      let cumSum = 0;
+      for (let i = 0; i < data.length; i++) cumSum += (data[i].high - data[i].low) / data[i].low;
+      thresholdValue = cumSum / data.length;
+    }
+
+    for (let i = 2; i < data.length; i++) {
+      const curr  = data[i];
+      const prev1 = data[i - 1];
+      const prev2 = data[i - 2];
+
+      // Bullish FVG: gap between curr.low and prev2.high (price jumped up)
+      const bullCondition = curr.low > prev2.high &&
+                            prev1.close > prev2.high &&
+                            (curr.low - prev2.high) / prev2.high > thresholdValue;
+
+      // Bearish FVG: gap between prev2.low and curr.high (price fell through)
+      const bearCondition = curr.high < prev2.low &&
+                            prev1.close < prev2.low &&
+                            (prev2.low - curr.high) / curr.high > thresholdValue;
+
+      if (bullCondition) {
+        bullishFVGs.push({ time: curr.time, index: i, max: curr.low, min: prev2.high, mitigated: false });
+        if (dynamic) { maxBullFvg = curr.low; minBullFvg = prev2.high; }
+      }
+
+      if (bearCondition) {
+        bearishFVGs.push({ time: curr.time, index: i, max: prev2.low, min: curr.high, mitigated: false });
+        if (dynamic) { maxBearFvg = prev2.low; minBearFvg = curr.high; }
+      }
+
+      // Mitigation — price closes through the gap
+      for (const fvg of bullishFVGs) {
+        if (!fvg.mitigated && curr.close < fvg.min) {
+          fvg.mitigated = true; fvg.mitigatedTime = curr.time; fvg.mitigatedIndex = i;
+        }
+      }
+      for (const fvg of bearishFVGs) {
+        if (!fvg.mitigated && curr.close > fvg.max) {
+          fvg.mitigated = true; fvg.mitigatedTime = curr.time; fvg.mitigatedIndex = i;
+        }
+      }
+
+      // Dynamic level tracking
+      if (dynamic && maxBullFvg !== null) maxBullFvg = Math.max(Math.min(curr.close, maxBullFvg), minBullFvg);
+      if (dynamic && minBearFvg !== null) minBearFvg = Math.min(Math.max(curr.close, minBearFvg), maxBearFvg);
+    }
+
+    // showLast: only retain the N most-recent unmitigated FVGs
+    const filteredBullish = showLast > 0 ? bullishFVGs.filter(f => !f.mitigated).slice(-showLast) : bullishFVGs;
+    const filteredBearish = showLast > 0 ? bearishFVGs.filter(f => !f.mitigated).slice(-showLast) : bearishFVGs;
+
+    return {
+      bullish:     filteredBullish,
+      bearish:     filteredBearish,
+      dynamicBull: dynamic && maxBullFvg !== null ? { max: maxBullFvg, min: minBullFvg } : null,
+      dynamicBear: dynamic && minBearFvg !== null ? { max: maxBearFvg, min: minBearFvg } : null,
+    };
+  }
+
   return {
     sma, ema, vwap, vwma,
     bollingerBands, donchian, keltner,
     atr, rsi, macd, stochastic, adx, cci, obv, mfi, williamsR,
     supertrend, pivotPoints, volumeBars,
     ichimoku, parabolicSAR, cmf, momentum, stochRSI, sdZonesAutoFib, orderBlocks,
+    FairValueGap,
   };
 })();
 

@@ -48,6 +48,7 @@ const INDICATOR_DEFS = [
   { group: "Others", items: [
    { id: "sd_zones_auto_fib", label: "S/D Zones & Auto Fib", color: "#5b9cf6", type: "overlay" },
    { id: "order_blocks",      label: "Order Blocks",          color: "#DBA632", type: "overlay" },
+   { id: "fvg_luxalgo",       label: "Fair Value Gap",        color: "#089981", type: "overlay" },
   ]},
 ];
 
@@ -854,6 +855,21 @@ class ChartPane {
           this.indicatorSeries[id] = '__ob_canvas__';
           break;
         }
+        case 'fvg_luxalgo': {
+          const result = Indicators.FairValueGap(
+            this.candles,
+            0,     // thresholdPer — % minimum gap size (0 = any gap)
+            false, // autoThreshold — auto-calculate from avg bar range
+            0,     // showLast — 0 = show all, N = show N most-recent unmitigated
+            false  // dynamic — show dynamic level lines at current price
+          );
+          this._fvgData = { bullish: result.bullish, bearish: result.bearish,
+                            dynamicBull: result.dynamicBull, dynamicBear: result.dynamicBear };
+          this._initFvgCanvas();
+          this._fvgRender();
+          this.indicatorSeries[id] = '__fvg_canvas__';
+          break;
+        }
         default:
           if (def.type === 'subpane') this._addSubPane(id, def, c);
       }
@@ -986,6 +1002,12 @@ class ChartPane {
           this._obCanvas = null;
         }
         this._obData = null;
+      } else if (s === '__fvg_canvas__') {
+        if (this._fvgCanvas) {
+          try { this._fvgCanvas.remove(); } catch(e) {}
+          this._fvgCanvas = null;
+        }
+        this._fvgData = null;
       } else {
         const rm = x => { if(x) { try { this.chart.removeSeries(x); } catch(e){} } };
         if (Array.isArray(s))    s.forEach(rm);
@@ -2544,6 +2566,173 @@ class ChartPane {
       ctx.setLineDash([6, 4]);
     }
     ctx.setLineDash([]);
+  }
+
+  _initFvgCanvas() {
+    if (this._fvgCanvas) { try { this._fvgCanvas.remove(); } catch(e) {} }
+    const chartEl = document.getElementById(`pane-chart-${this.id}`);
+    if (!chartEl) return;
+    const cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;z-index:9;pointer-events:none;';
+    cv.width  = chartEl.offsetWidth  || 600;
+    cv.height = chartEl.offsetHeight || 400;
+    chartEl.appendChild(cv);
+    this._fvgCanvas = cv;
+    new ResizeObserver(() => {
+      cv.width  = chartEl.offsetWidth;
+      cv.height = chartEl.offsetHeight;
+      this._fvgRender();
+    }).observe(chartEl);
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._fvgRender());
+    this.chart.subscribeCrosshairMove(() => this._fvgRender());
+  }
+
+  _fvgRender() {
+    const cv = this._fvgCanvas;
+    if (!cv || !this._fvgData) return;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const dec = this._symbolPriceFormat ? this._symbolPriceFormat().dec : 5;
+    const EXTEND_BARS = 20; // bars forward to extend unmitigated FVG zones
+
+    const toX = t => {
+      try {
+        const x = this.chart.timeScale().timeToCoordinate(t);
+        if (x !== null) return x;
+        const c = this.candles;
+        if (!c || c.length < 2) return null;
+        const lastX = this.chart.timeScale().timeToCoordinate(c[c.length - 1].time);
+        const prevX = this.chart.timeScale().timeToCoordinate(c[c.length - 2].time);
+        if (lastX === null || prevX === null) return null;
+        const pxPerBar = lastX - prevX;
+        const barMs    = c[c.length - 1].time - c[c.length - 2].time;
+        if (!barMs) return lastX;
+        return lastX + ((t - c[c.length - 1].time) / barMs) * pxPerBar;
+      } catch(e) { return null; }
+    };
+    const toY = p => { try { return this.candleSeries.priceToCoordinate(p); } catch(e) { return null; } };
+
+    // Helper — get the end X for a FVG zone
+    const endX = (fvg) => {
+      if (fvg.mitigated && fvg.mitigatedTime) return toX(fvg.mitigatedTime);
+      // Extend EXTEND_BARS bars beyond the FVG candle
+      const c = this.candles;
+      if (!c || c.length < 2) return toX(fvg.time);
+      const barMs = c[c.length - 1].time - c[c.length - 2].time;
+      return toX(fvg.time + barMs * EXTEND_BARS);
+    };
+
+    // ── Bullish FVGs (teal / green) ───────────────────────────────────────────
+    for (const fvg of (this._fvgData.bullish || [])) {
+      const x0 = toX(fvg.time);
+      const x1 = endX(fvg);
+      const yTop = toY(fvg.max);   // higher price = top of gap
+      const yBot = toY(fvg.min);   // lower price = bottom of gap
+      if (x0 === null || x1 === null || yTop === null || yBot === null) continue;
+
+      const rw = x1 - x0;
+      const rh = Math.abs(yBot - yTop);
+      if (rw <= 0 || rh <= 0) continue;
+
+      // Fill
+      ctx.fillStyle = fvg.mitigated ? 'rgba(8,153,129,0.12)' : 'rgba(8,153,129,0.22)';
+      ctx.fillRect(x0, yTop, rw, rh);
+
+      // Border lines (top and bottom of gap)
+      ctx.strokeStyle = fvg.mitigated ? 'rgba(8,153,129,0.35)' : 'rgba(8,153,129,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0, yTop); ctx.lineTo(x0 + rw, yTop); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, yBot); ctx.lineTo(x0 + rw, yBot); ctx.stroke();
+
+      // Mitigation line (dashed at gap bottom)
+      if (fvg.mitigated) {
+        ctx.strokeStyle = 'rgba(8,153,129,0.5)';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(x0, yBot); ctx.lineTo(x0 + rw, yBot); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Label
+      if (rh > 8) {
+        ctx.fillStyle = fvg.mitigated ? 'rgba(8,153,129,0.6)' : 'rgba(8,153,129,0.95)';
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('FVG ▲', x0 + 4, yTop + 10);
+        ctx.font = '8px JetBrains Mono, monospace';
+        ctx.fillStyle = 'rgba(8,153,129,0.6)';
+        ctx.fillText(fvg.min.toFixed(dec) + ' – ' + fvg.max.toFixed(dec), x0 + 4, yBot - 3);
+      }
+    }
+
+    // ── Bearish FVGs (red) ────────────────────────────────────────────────────
+    for (const fvg of (this._fvgData.bearish || [])) {
+      const x0 = toX(fvg.time);
+      const x1 = endX(fvg);
+      const yTop = toY(fvg.max);
+      const yBot = toY(fvg.min);
+      if (x0 === null || x1 === null || yTop === null || yBot === null) continue;
+
+      const rw = x1 - x0;
+      const rh = Math.abs(yBot - yTop);
+      if (rw <= 0 || rh <= 0) continue;
+
+      ctx.fillStyle = fvg.mitigated ? 'rgba(242,54,69,0.12)' : 'rgba(242,54,69,0.22)';
+      ctx.fillRect(x0, yTop, rw, rh);
+
+      ctx.strokeStyle = fvg.mitigated ? 'rgba(242,54,69,0.35)' : 'rgba(242,54,69,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0, yTop); ctx.lineTo(x0 + rw, yTop); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, yBot); ctx.lineTo(x0 + rw, yBot); ctx.stroke();
+
+      if (fvg.mitigated) {
+        ctx.strokeStyle = 'rgba(242,54,69,0.5)';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(x0, yTop); ctx.lineTo(x0 + rw, yTop); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (rh > 8) {
+        ctx.fillStyle = fvg.mitigated ? 'rgba(242,54,69,0.6)' : 'rgba(242,54,69,0.95)';
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('FVG ▼', x0 + 4, yTop + 10);
+        ctx.font = '8px JetBrains Mono, monospace';
+        ctx.fillStyle = 'rgba(242,54,69,0.6)';
+        ctx.fillText(fvg.min.toFixed(dec) + ' – ' + fvg.max.toFixed(dec), x0 + 4, yBot - 3);
+      }
+    }
+
+    // ── Dynamic level lines ───────────────────────────────────────────────────
+    if (this._fvgData.dynamicBull) {
+      const y = toY(this._fvgData.dynamicBull.max);
+      if (y !== null) {
+        ctx.strokeStyle = 'rgba(8,153,129,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+        ctx.fillStyle = 'rgba(8,153,129,0.9)';
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('FVG DYN ▲', W - 4, y - 3);
+      }
+    }
+    if (this._fvgData.dynamicBear) {
+      const y = toY(this._fvgData.dynamicBear.min);
+      if (y !== null) {
+        ctx.strokeStyle = 'rgba(242,54,69,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+        ctx.fillStyle = 'rgba(242,54,69,0.9)';
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('FVG DYN ▼', W - 4, y + 11);
+      }
+    }
   }
 
   _trendRender() {
