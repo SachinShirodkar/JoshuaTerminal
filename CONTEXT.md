@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: Snapshot System — Playwright-based headless chart capture replacing TradingView MCP pipeline_
+_Last updated: Fair Value Gap (FVG) indicator added — LuxAlgo-style canvas overlay with bullish/bearish zones, mitigation tracking, dynamic levels_
 
 ---
 
@@ -11,10 +11,7 @@ _Last updated: Snapshot System — Playwright-based headless chart capture repla
 ## Stack
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.12 (pinned via uv), Flask, Flask-SocketIO (threading mode), python-dotenv |
-| Dependency mgmt | uv — pyproject.toml + uv.lock (pip/requirements.txt retained for compatibility) |
-| Service (macOS) | launchd — com.joshuaterminal.app.plist |
-| Service (Linux) | systemd — unit file TBD |
+| Backend | Python 3.9+, Flask, Flask-SocketIO (threading mode), python-dotenv |
 | Frontend | Vanilla JS (no framework), Lightweight Charts v4.1.3 |
 | Forex live prices | OANDA v20 REST + HTTP streaming (primary) |
 | Crypto live prices | Hyperliquid WebSocket (allMids) |
@@ -190,12 +187,12 @@ Playwright runs in an isolated browser profile with empty localStorage. The brid
 - ✅ Lock toggle (🔓/🔒) on all drawing panels — persisted in save state
 - ✅ Click any line to reopen its panel
 
-### Indicators (27+)
+### Indicators (28+)
 - ✅ SMA/EMA (20/50/200), VWAP, VWMA
 - ✅ Bollinger, Donchian, Keltner
 - ✅ Supertrend, Ichimoku, Parabolic SAR, Pivot Points
 - ✅ Volume, RSI, MACD, Stochastic, Stoch RSI, ATR, ADX, CCI, CMF, OBV, MFI, Williams %R, Momentum
-- ✅ S/D Zones & Auto Fib (canvas), Order Blocks (canvas)
+- ✅ S/D Zones & Auto Fib (canvas), Order Blocks (canvas), Fair Value Gap / FVG (canvas)
 
 ---
 
@@ -292,7 +289,6 @@ SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 ---
 
 ## Bucket List (future sessions)
-- [ ] **Linux port** — systemd unit file (Python code and .env are already platform-neutral; uv handles Python + dep parity)
 - [ ] **Web search in analysis** — add `web_search` tool to `client.messages.create()` in `run_analysis.py`
 - [ ] **Telegram inline images** — send PNGs alongside analysis text
 - [ ] **Scheduled auto-run** — scheduler config in `config.py` already exists, needs wiring
@@ -320,19 +316,11 @@ SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 ## Running the App
 ```bash
 cd joshua_terminal
-uv sync                              # install/update deps from uv.lock
-uv run playwright install chromium   # once per machine
-cp .env.example .env                 # then fill in your keys
-uv run python app.py
+pip install -r requirements.txt
+pip install playwright && playwright install chromium   # for snapshot system
+cp .env.example .env   # then fill in your keys
+python app.py
 # → https://localhost:5050 (if SSL certs present) or http://localhost:5050
-```
-
-**As a macOS service (launchd):**
-```bash
-# Edit com.joshuaterminal.app.plist — fill in uv path and project path
-cp com.joshuaterminal.app.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.joshuaterminal.app.plist
-tail -f ~/Library/Logs/JoshuaTerminal/stderr.log
 ```
 
 Debug: `http://localhost:5050/debug`
@@ -345,3 +333,37 @@ cd forex_automation
 python run_analysis.py --dry-run --save-screenshots   # verify charts first
 python run_analysis.py                                # full run with Claude analysis
 ```
+
+---
+
+## FVG — Fair Value Gap Implementation Notes
+
+### What it detects
+Three-candle imbalance pattern (LuxAlgo-style):
+- **Bullish FVG:** `candle[0].low > candle[2].high` — gap between current candle's low and two-bars-ago high
+- **Bearish FVG:** `candle[0].high < candle[2].low` — gap between current candle's high and two-bars-ago low
+- Threshold filter: gap must exceed `thresholdPer %` of price (or auto-calculated avg bar range)
+
+### Mitigation
+- Bullish FVG mitigated when `close < fvg.min` (price closes below gap bottom)
+- Bearish FVG mitigated when `close > fvg.max` (price closes above gap top)
+- Mitigated zones fade to 12% opacity (from 22%) and show dashed border line
+
+### Canvas rendering
+- z-index 9 (above Order Blocks at z-index 8)
+- Zones extend `EXTEND_BARS = 20` bars forward for unmitigated FVGs
+- Mitigated FVGs extend only to the mitigated candle's time
+- Labels: `FVG ▲` / `FVG ▼` + price range shown when zone height > 8px
+- Dynamic mode: horizontal lines at current dynamic bull/bear levels (`FVG DYN ▲/▼`)
+
+### Parameters (hardcoded defaults in _addIndicator case)
+| Param | Default | Description |
+|---|---|---|
+| thresholdPer | 0 | Min gap size as % of price (0 = any gap) |
+| autoThreshold | false | Auto-calculate threshold from avg bar range |
+| showLast | 0 | 0 = all FVGs, N = N most-recent unmitigated only |
+| dynamic | false | Show dynamic level lines at current price |
+
+### Key files changed
+- `static/js/indicators.js` — `fvgLuxAlgo()` function added + exported
+- `static/js/pane.js` — INDICATOR_DEFS entry, `_addIndicator` case, `_removeIndicator` branch, `_initFvgCanvas()`, `_fvgRender()`
