@@ -4,67 +4,43 @@
 <plist version="1.0">
 <dict>
 
-  <!-- ── Identity ─────────────────────────────────────────────────────────── -->
   <key>Label</key>
   <string>com.joshuaterminal.app</string>
 
-  <!-- ── Command ──────────────────────────────────────────────────────────── -->
-  <!--
-    EDIT THESE TWO VALUES before installing:
-      1. ProgramArguments[0] → full path to your python3 (run: which python3)
-      2. ProgramArguments[1] → full path to app.py in your project folder
-      3. WorkingDirectory    → same folder as app.py
-  -->
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/python3</string>
-    <string>/Users/YOUR_USERNAME/path/to/joshua-terminal/app.py</string>
+    <string>/Users/<YourUserName>/.local/bin/uv</string>
+    <string>run</string>
+    <string>--project</string>
+    <string>/Users/<YourUserName>/JoshuaTerminal</string>
+    <string>python</string>
+    <string>/Users/<YourUserName>/JoshuaTerminal/app.py</string>
   </array>
 
-  <!-- Working directory — must match the project folder -->
   <key>WorkingDirectory</key>
-  <string>/Users/YOUR_USERNAME/path/to/joshua-terminal</string>
+  <string>/Users/<YourUserName>/JoshuaTerminal</string>
 
-  <!-- ── Auto-start &amp; restart ──────────────────────────────────────────── -->
-  <!-- Start automatically when you log in -->
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- Restart if the process crashes or exits unexpectedly -->
   <key>KeepAlive</key>
   <true/>
 
-  <!-- Wait 5 seconds between restart attempts -->
   <key>ThrottleInterval</key>
   <integer>5</integer>
 
-  <!-- ── Logs ─────────────────────────────────────────────────────────────── -->
-  <!--
-    Logs are written to ~/Library/Logs/JoshuaTerminal/
-    Create the folder first:  mkdir -p ~/Library/Logs/JoshuaTerminal
-  -->
   <key>StandardOutPath</key>
-  <string>/Users/YOUR_USERNAME/Library/Logs/JoshuaTerminal/stdout.log</string>
+  <string>/Users/<YourUserName>/Library/Logs/JoshuaTerminal/stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/YOUR_USERNAME/Library/Logs/JoshuaTerminal/stderr.log</string>
+  <string>/Users/<YourUserName>/Library/Logs/JoshuaTerminal/stderr.log</string>
 
-  <!-- ── Environment ──────────────────────────────────────────────────────── -->
-  <!--
-    PATH is minimal inside launchd — extend it so Python can find
-    site-packages installed by Homebrew or pipx.
-    Adjust if you use pyenv, conda, or a virtualenv:
-      pyenv:  /Users/YOUR_USERNAME/.pyenv/shims:/Users/YOUR_USERNAME/.pyenv/bin
-      venv:   /Users/YOUR_USERNAME/path/to/venv/bin
-  -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
     <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-
-    <!-- Optional: point to a virtualenv instead of the system Python -->
-    <!-- <key>VIRTUAL_ENV</key> -->
-    <!-- <string>/Users/YOUR_USERNAME/path/to/venv</string> -->
+    <key>HOME</key>
+    <string>/Users/<YourUserName></string>
   </dict>
 
 </dict>
