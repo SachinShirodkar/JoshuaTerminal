@@ -182,6 +182,8 @@ class ChartPane {
         <span class="ticker-change">—</span>
         <span class="ticker-arrow">—</span>
         <span class="ticker-spacer"></span>
+        <span class="ticker-countdown"></span>
+        <span class="ticker-time-sep">·</span>
         <span class="ticker-time"></span>
       </div>
       <div class="pane-chart-wrap">
@@ -517,6 +519,7 @@ class ChartPane {
     }
 
     if (last) this._updateTicker(last.close, last.close, 0, 0, 'up');
+    this._startCandleCountdown();
   }
 
   // Apply a right-side gap so the last candle isn't flush against the price scale.
@@ -677,6 +680,64 @@ class ChartPane {
       '8h':  28800, '12h': 43200, '1d':   86400, '1w':  604800,
     };
     return (map[interval] || 0) * 1000;
+  }
+
+  // ── Candle Countdown ─────────────────────────────────────────────────────────
+
+  _startCandleCountdown() {
+    this._stopCandleCountdown();
+    const tick = () => {
+      const el = this.container.querySelector('.ticker-countdown');
+      if (!el) return;
+      const intervalMs = this._intervalToMs(this.interval);
+      if (!intervalMs || !this.candles.length) { el.textContent = ''; return; }
+
+      const last      = this.candles[this.candles.length - 1];
+      const barDurSec = intervalMs / 1000;
+      const barEndSec = last.time + barDurSec;
+      const nowSec    = Date.now() / 1000;
+      let   remSec    = Math.max(0, barEndSec - nowSec);
+
+      el.textContent = '⏱ ' + this._formatCountdown(remSec, intervalMs);
+
+      // Pulse red when under 10% of candle duration remaining
+      const threshold = barDurSec * 0.10;
+      el.classList.toggle('countdown-urgent', remSec > 0 && remSec <= threshold);
+    };
+    tick();
+    this._countdownTimer = setInterval(tick, 1000);
+  }
+
+  _stopCandleCountdown() {
+    if (this._countdownTimer) {
+      clearInterval(this._countdownTimer);
+      this._countdownTimer = null;
+    }
+  }
+
+  _formatCountdown(remSec, intervalMs) {
+    const intervalSec = intervalMs / 1000;
+    const h  = Math.floor(remSec / 3600);
+    const m  = Math.floor((remSec % 3600) / 60);
+    const s  = Math.floor(remSec % 60);
+    const pad = n => String(n).padStart(2, '0');
+
+    if (intervalSec <= 900) {
+      // ≤ 15m  →  MM:SS
+      return `${pad(m)}:${pad(s)}`;
+    } else if (intervalSec < 86400) {
+      // 30m – 12h  →  1h 23m  or  45m
+      if (h > 0) return `${h}h ${pad(m)}m`;
+      return `${m}m ${pad(s)}s`;
+    } else if (intervalSec < 604800) {
+      // 1D  →  14h 32m
+      return `${h}h ${pad(m)}m`;
+    } else {
+      // 1W  →  2d 14h
+      const d = Math.floor(remSec / 86400);
+      const hh = Math.floor((remSec % 86400) / 3600);
+      return `${d}d ${hh}h`;
+    }
   }
 
   _updateTicker(price, prev, change, changePct, dir) {

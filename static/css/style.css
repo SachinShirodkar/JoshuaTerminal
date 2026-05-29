@@ -292,6 +292,27 @@ html, body {
 .ticker-arrow.down { color: var(--red); }
 
 .ticker-spacer { flex: 1; }
+.ticker-countdown {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent2);
+  letter-spacing: 0.5px;
+  min-width: 52px;
+  text-align: right;
+  transition: color 0.3s;
+}
+.ticker-countdown.countdown-urgent {
+  color: var(--gold);
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+@keyframes countdown-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+.ticker-time-sep {
+  font-size: 10px;
+  color: var(--border2);
+}
 .ticker-time {
   font-size: 10px;
   color: var(--text3);
