@@ -5,3 +5,6 @@ static/js/.DS_Store
 *.sh
 *.pem
 com.joshuaterminal.app.plist
+__pycache__/
+*.pyc
+.venv
