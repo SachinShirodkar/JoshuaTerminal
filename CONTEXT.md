@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: Fair Value Gap (FVG) indicator added — LuxAlgo-style canvas overlay with bullish/bearish zones, mitigation tracking, dynamic levels_
+_Last updated: Candle countdown timer added — live ⏱ countdown in ticker bar, adaptive format per timeframe, urgency pulse when <10% of candle remains_
 
 ---
 
@@ -142,6 +142,7 @@ Playwright runs in an isolated browser profile with empty localStorage. The brid
 - ✅ Live crypto prices via Hyperliquid WebSocket (allMids)
 - ✅ yfinance polling fallback (5s interval) when no OANDA key
 - ✅ Colour-coded ticker bar with flash-up/flash-down animation
+- ✅ Candle countdown timer — `.ticker-countdown` span in ticker bar, driven by `_startCandleCountdown()` / `_stopCandleCountdown()` / `_formatCountdown()` in `pane.js`; restarts on every `_renderCandles()` call (i.e. on load and interval change); adaptive format: MM:SS (≤15m), `Xh YYm` (30m–12h), `Xh YYm` (1D), `Xd Yh` (1W); pulses amber (`.countdown-urgent`) when remaining time ≤ 10% of candle duration
 - ✅ World clock (UTC, NY, London, Tokyo) + market session indicator
 - ✅ Symbol autocomplete dropdown (Majors/Minors/Exotics/Metals/Indices/Crypto)
 - ✅ Fullscreen mode, dark/light theme toggle, multi-monitor support
@@ -367,3 +368,31 @@ Three-candle imbalance pattern (LuxAlgo-style):
 ### Key files changed
 - `static/js/indicators.js` — `fvgLuxAlgo()` function added + exported
 - `static/js/pane.js` — INDICATOR_DEFS entry, `_addIndicator` case, `_removeIndicator` branch, `_initFvgCanvas()`, `_fvgRender()`
+
+---
+
+## Candle Countdown Timer — Implementation Notes
+
+### What it does
+Displays a live countdown to the next candle close in the ticker bar, immediately to the left of the clock. Format adapts to the active timeframe so the display is always readable without being noisy.
+
+### Format rules
+| Timeframe | Format | Example |
+|---|---|---|
+| ≤ 15m | `MM:SS` | `04:23` |
+| 30m – 12h | `Xh YYm` or `YYm ZZs` | `1h 23m` / `45m 07s` |
+| 1D | `Xh YYm` | `14h 32m` |
+| 1W | `Xd Yh` | `2d 14h` |
+
+### Urgency state
+When remaining time ≤ 10% of the full candle duration (e.g. last 30s of a 5m candle, last 24min of a 4H candle), the `.countdown-urgent` class is toggled on — changes colour to `var(--gold)` and applies a 1s opacity pulse animation.
+
+### Architecture
+- `_startCandleCountdown()` — clears any existing timer, starts `setInterval(tick, 1000)`; called at end of `_renderCandles()` so it restarts automatically on load and interval changes
+- `_stopCandleCountdown()` — clears `this._countdownTimer`; called at top of `_startCandleCountdown()` to prevent stacking
+- `_formatCountdown(remSec, intervalMs)` — pure formatter, returns display string
+- Ticker HTML: `.ticker-countdown` span + `.ticker-time-sep` separator (`·`) already present in `_buildHTML()` template
+
+### Key files changed
+- `static/js/pane.js` — `_startCandleCountdown()`, `_stopCandleCountdown()`, `_formatCountdown()` methods added; `this._startCandleCountdown()` call added at end of `_renderCandles()`
+- `static/css/style.css` — `.ticker-countdown`, `.ticker-countdown.countdown-urgent`, `@keyframes countdown-pulse`, `.ticker-time-sep` rules added
