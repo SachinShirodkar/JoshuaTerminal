@@ -3,6 +3,12 @@ app.py — Joshua Terminal backend
 Runs on http://localhost:5050
 """
 
+# ── Gevent monkey-patch — MUST be first, before any other imports ─────────────
+# Without this, gevent cannot patch stdlib threading/sockets and background
+# threads (OANDA stream, HL WebSocket, YF poll) won't deliver live updates.
+from gevent import monkey
+monkey.patch_all()
+
 import json, threading, time, logging, os
 from pathlib import Path
 import websocket as ws_client
