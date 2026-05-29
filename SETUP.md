@@ -9,6 +9,8 @@
 | Browser | Chrome / Edge | Chrome recommended for PWA install |
 | OANDA account | Practice or Live | Free at oanda.com — needed for real-time forex |
 
+> **macOS service:** If you plan to run Joshua Terminal as a background service via launchd, see [Section 8 — Run as a macOS Service](#8-run-as-a-macos-service).
+
 ---
 
 ## 2. Install Python dependencies
@@ -234,7 +236,76 @@ Reports saved to `reports/forex_analysis_<date>.md` and sent to Telegram if conf
 
 ---
 
-## 8. Troubleshooting
+## 8. Run as a macOS Service (launchd)
+
+Running Joshua Terminal as a launchd service means it starts automatically at login and restarts itself if it ever crashes — no open terminal required.
+
+### Why the code was updated for service use
+
+When run manually, Python resolves `.env` and SSL certificate paths relative to whichever directory you `cd` into before running `python app.py`. A launchd service has no such working directory, so both `app.py` and `data_source.py` were updated to load `.env` and resolve SSL paths relative to the script file's own location (`Path(__file__).parent`). No code changes are needed beyond what is already committed.
+
+### Step 1 — Create the log directory
+
+```bash
+mkdir -p ~/Library/Logs/JoshuaTerminal
+```
+
+### Step 2 — Install the plist
+
+A ready-to-use plist is provided at `com.joshuaterminal.app.plist` in the project root. Before installing it you must edit three placeholders:
+
+| Placeholder | Replace with |
+|---|---|
+| `/usr/local/bin/python3` | Output of `which python3` on your machine |
+| `/Users/YOUR_USERNAME/path/to/joshua-terminal/app.py` | Absolute path to `app.py` |
+| `/Users/YOUR_USERNAME/path/to/joshua-terminal` | Absolute path to the project folder |
+| `YOUR_USERNAME` in log paths | Your macOS username |
+
+> **Using a virtualenv?** Replace the `python3` path with `/path/to/venv/bin/python3` — that's all you need.
+
+```bash
+# Copy to LaunchAgents
+cp com.joshuaterminal.app.plist ~/Library/LaunchAgents/
+
+# Load and start
+launchctl load ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+```
+
+### Step 3 — Verify
+
+```bash
+# Should show a PID (not a dash) in the first column
+launchctl list | grep joshuaterminal
+
+# Should return OK candle counts
+curl http://localhost:5050/debug
+```
+
+### Day-to-day commands
+
+```bash
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+
+# Restart (e.g. after editing .env or updating code)
+launchctl unload ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+launchctl load   ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+
+# Watch live logs
+tail -f ~/Library/Logs/JoshuaTerminal/stderr.log
+```
+
+### SSL certs with the service
+
+`SSL_CERT` and `SSL_KEY` in `.env` can be relative paths (e.g. `localhost.pem`) — the service resolves them relative to the project folder automatically. No changes to `.env` are required when switching between manual and service modes.
+
+### Porting to Linux
+
+On Linux, launchd is replaced by systemd. The Python code and `.env` are identical — only the service unit file changes. A systemd unit will be added when the Linux port is undertaken.
+
+---
+
+## 9. Troubleshooting
 
 | Problem | Solution |
 |---|---|
@@ -248,10 +319,13 @@ Reports saved to `reports/forex_analysis_<date>.md` and sent to Telegram if conf
 | PWA install icon not showing | Must be on `https://localhost:5050`. Refresh once after service worker registers |
 | SSL cert error on new machine | Run `mkcert -install` then `mkcert localhost` in the project folder |
 | Sub-pane oscillators not syncing | Known LWC limitation — scroll the chart once after load |
+| Service won't start (launchd) | Check `~/Library/Logs/JoshuaTerminal/stderr.log`. Most common cause: wrong Python path in plist |
+| Service starts but `.env` not loaded | Ensure `app.py` and `data_source.py` are the updated versions that use `Path(__file__).parent / ".env"` |
+| `launchctl list` shows no PID | Process exited — check stderr log for Python import errors or missing dependencies |
 
 ---
 
-## 9. Changing the port
+## 10. Changing the port
 
 Edit the last line of `app.py`:
 

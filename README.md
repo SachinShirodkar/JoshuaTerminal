@@ -152,6 +152,38 @@ Install as a standalone app (no browser chrome) using HTTPS + mkcert. See `SETUP
 
 ---
 
+## Running as a macOS Service
+
+Joshua Terminal can run as a background launchd service — starts at login, restarts on crash, no open terminal needed.
+
+```bash
+# 1. Create log directory
+mkdir -p ~/Library/Logs/JoshuaTerminal
+
+# 2. Edit com.joshuaterminal.app.plist — fill in your Python path and project path
+
+# 3. Install and start
+cp com.joshuaterminal.app.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+
+# Verify
+launchctl list | grep joshuaterminal
+curl http://localhost:5050/debug
+
+# Restart after config changes
+launchctl unload ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+launchctl load   ~/Library/LaunchAgents/com.joshuaterminal.app.plist
+
+# Watch logs
+tail -f ~/Library/Logs/JoshuaTerminal/stderr.log
+```
+
+See `SETUP.md` Section 8 for full details including virtualenv usage and SSL cert behaviour.
+
+> **Linux:** The Python code and `.env` are platform-neutral. Only the service unit file differs — a systemd unit will be added when the Linux port is undertaken.
+
+---
+
 ## Tips
 
 - **Save your drawings** with the SAVE button — amber dot means unsaved changes. Saving also syncs drawings to the server so they appear in AI analysis snapshots
