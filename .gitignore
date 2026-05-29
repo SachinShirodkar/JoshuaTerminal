@@ -8,3 +8,4 @@ com.joshuaterminal.app.plist
 __pycache__/
 *.pyc
 .venv
+snapshot_state.json
