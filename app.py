@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "trading_terminal_secret"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # ── Snapshot blueprint (state API + headless chart capture) ───────────────────
 app.register_blueprint(snapshot_bp)
@@ -522,13 +522,21 @@ if __name__ == "__main__":
     env      = ds.OANDA_ENV if src == "oanda" else ""
 
     # ── Resolve SSL cert paths relative to project dir (service-safe) ─────────
+    # Gevent requires a proper ssl.SSLContext object — it does not accept a
+    # (certfile, keyfile) tuple the way plain Werkzeug does.
+    import ssl as _ssl
     ssl_cert = os.environ.get("SSL_CERT", "")
     ssl_key  = os.environ.get("SSL_KEY",  "")
     if ssl_cert and not os.path.isabs(ssl_cert):
         ssl_cert = str(_PROJECT_DIR / ssl_cert)
     if ssl_key and not os.path.isabs(ssl_key):
         ssl_key = str(_PROJECT_DIR / ssl_key)
-    ssl_ctx  = (ssl_cert, ssl_key) if (ssl_cert and ssl_key and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key)) else None
+
+    ssl_ctx = None
+    if ssl_cert and ssl_key and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
+        ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        ssl_ctx.load_cert_chain(certfile=ssl_cert, keyfile=ssl_key)
+
     protocol = "https" if ssl_ctx else "http"
 
     print("\n  ╔" + "═"*47 + "╗")
@@ -548,4 +556,5 @@ if __name__ == "__main__":
     print("  ╚" + "═"*47 + "╝\n")
     hl_manager.start()
     socketio.run(app, host="0.0.0.0", port=5050, debug=False,
-                 use_reloader=False, ssl_context=ssl_ctx)
+                 use_reloader=False, ssl_context=ssl_ctx,
+                 allow_unsafe_werkzeug=True)
