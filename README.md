@@ -21,6 +21,7 @@ Includes an integrated AI analysis pipeline that captures your charts (with all 
 - **Timezone picker** — set chart time to any major financial timezone (NY, London, Tokyo, etc.)
 - **Dark / light theme** — toggle with one click, persists across sessions
 - **State persistence** — drawings, indicators, candle colours, and pane layouts saved to localStorage and restored automatically
+- **Candle countdown timer** — live countdown to next candle close in the ticker bar; adaptive format (MM:SS for ≤15m, `1h 23m` for intraday, `14h 32m` for daily, `2d 14h` for weekly); pulses amber when under 10% of candle duration remains
 - **World clock** — UTC, New York, London, Tokyo times in topbar
 - **Session indicator** — Asia / London / US Open / Overlap / Pre-market / After Hours / Weekend
 - **AI analysis pipeline** — headless Playwright snapshots of your live charts (with S/D zones and indicators) sent to Claude for automated forex analysis, report saved locally and delivered via Telegram
