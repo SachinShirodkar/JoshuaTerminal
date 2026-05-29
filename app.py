@@ -4,6 +4,7 @@ Runs on http://localhost:5050
 """
 
 import json, threading, time, logging, os
+from pathlib import Path
 import websocket as ws_client
 import requests as http_requests
 from flask import Flask, render_template, jsonify, request, send_from_directory
@@ -12,7 +13,9 @@ from dotenv import load_dotenv
 import data_source as ds
 from snapshot_routes import snapshot_bp
 
-load_dotenv()
+# ── Load .env from the project folder (service-safe: does not rely on cwd) ───
+_PROJECT_DIR = Path(__file__).parent
+load_dotenv(_PROJECT_DIR / ".env")
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "")
@@ -517,8 +520,14 @@ FOREX_PAIRS = {
 if __name__ == "__main__":
     src      = ds.get_active_source()
     env      = ds.OANDA_ENV if src == "oanda" else ""
+
+    # ── Resolve SSL cert paths relative to project dir (service-safe) ─────────
     ssl_cert = os.environ.get("SSL_CERT", "")
     ssl_key  = os.environ.get("SSL_KEY",  "")
+    if ssl_cert and not os.path.isabs(ssl_cert):
+        ssl_cert = str(_PROJECT_DIR / ssl_cert)
+    if ssl_key and not os.path.isabs(ssl_key):
+        ssl_key = str(_PROJECT_DIR / ssl_key)
     ssl_ctx  = (ssl_cert, ssl_key) if (ssl_cert and ssl_key and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key)) else None
     protocol = "https" if ssl_ctx else "http"
 
