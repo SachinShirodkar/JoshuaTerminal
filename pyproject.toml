@@ -1,0 +1,37 @@
+[project]
+name = "joshua-terminal"
+version = "1.0.0"
+description = "Self-hosted multi-chart trading dashboard with AI analysis pipeline"
+requires-python = ">=3.9"
+
+dependencies = [
+    # ── Web framework ─────────────────────────────────────────────────────
+    "flask>=3.0.0",
+    "flask-socketio>=5.3.6",
+
+    # ── Data sources ──────────────────────────────────────────────────────
+    "yfinance>=0.2.38",
+    "requests>=2.31.0",
+    "websocket-client>=1.7.0",
+
+    # ── WSGI / async ──────────────────────────────────────────────────────
+    "gevent>=24.2.1",
+    "gevent-websocket>=0.10.1",
+
+    # ── Config ────────────────────────────────────────────────────────────
+    "python-dotenv>=1.0.0",
+
+    # ── Snapshot / AI pipeline ────────────────────────────────────────────
+    # After uv sync, also run: uv run playwright install chromium
+    "playwright>=1.40.0",
+]
+
+# ── Tell uv this is a plain script project, not a Python package ──────────────
+# Without this, uv tries to build and install the project itself as a wheel,
+# which fails because there is no joshua_terminal/ package directory.
+[tool.uv]
+package = false
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
