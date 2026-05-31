@@ -31,7 +31,10 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "trading_terminal_secret"
+app.config["SECRET_KEY"] = os.environ.get(
+    "SECRET_KEY",
+    "trading_terminal_secret"   # fallback keeps the app runnable without .env
+)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # ── Snapshot blueprint (state API + headless chart capture) ───────────────────
