@@ -99,6 +99,22 @@
 
 <!-- No socket.io — snapshots don't need live prices -->
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+  // ── lightweight-charts version guard ──────────────────────────────────────
+  // v5+ changed to a restrictive non-commercial licence (source-available).
+  // This project requires v4.x (Apache 2.0). Halt loudly if a future CDN
+  // update or manual change sneaks in a breaking version.
+  (function () {
+    var ver = (window.LightweightCharts && window.LightweightCharts.version)
+               ? window.LightweightCharts.version()
+               : null;
+    if (!ver) { console.error('[JT] Could not detect lightweight-charts version.'); return; }
+    var major = parseInt(ver.split('.')[0], 10);
+    if (major >= 5) {
+      throw new Error('[JT] lightweight-charts v' + ver + ' detected — v4.x required. v5+ uses a restrictive non-commercial licence incompatible with this open-source project. Pin the CDN URL to lightweight-charts@4.1.3.');
+    }
+  })();
+</script>
 <script src="/static/js/indicators.js"></script>
 <script src="/static/js/state_store.js"></script>
 <script src="/static/js/alert_engine.js"></script>
