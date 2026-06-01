@@ -1320,7 +1320,8 @@ class ChartPane {
       const my    = e.clientY - rect.top;
       const price = this._pixelToPrice(my);
       if (price === null) return;
-      this._pipDrawing = { startPrice: price, startY: my, startX: mx, currentY: my, currentX: mx };
+      const time = this._pixelToTime(mx) || this._trendXToTimeFree(mx);
+      this._pipDrawing = { startPrice: price, startTime: time, startY: my, startX: mx, currentY: my, currentX: mx };
       return;
     }
   }
@@ -1403,12 +1404,13 @@ class ChartPane {
       this.chart.applyOptions({ handleScale:{mouseWheel:true,pinch:true}, handleScroll:{mouseWheel:true,pressedMouseMove:true} });
       if (endPrice !== null && Math.abs(endPrice - this._pipDrawing.startPrice) > 0.000001) {
         const id = ++this._pipIdCounter;
+        const endTime = this._pixelToTime(e.clientX - rect2.left) || this._trendXToTimeFree(e.clientX - rect2.left);
         this._pipMeasures.push({
           id,
           priceA: this._pipDrawing.startPrice,
           priceB: endPrice,
-          xA: this._pipDrawing.startX,
-          xB: this._pipDrawing.currentX,
+          timeA:  this._pipDrawing.startTime,
+          timeB:  endTime,
         });
       }
       this._pipDrawing = null;
@@ -2915,98 +2917,117 @@ class ChartPane {
     }
 
     // ── Pip measurement rulers ────────────────────────────────────────────────
+    // Helper: convert a candle time → pixel X, with free-extrapolation fallback
+    const _pipTimeToX = (t) => {
+      if (!t) return null;
+      const px = this._trendTimeToX(t);
+      if (px !== null) return px;
+      // Extrapolate beyond visible range using last two candles as reference
+      const c = this.candles;
+      if (!c || c.length < 2) return null;
+      const lastX = this._trendTimeToX(c[c.length - 1].time);
+      const prevX = this._trendTimeToX(c[c.length - 2].time);
+      if (lastX === null || prevX === null) return null;
+      const barMs  = c[c.length - 1].time - c[c.length - 2].time;
+      if (barMs === 0) return lastX;
+      return lastX + ((t - c[c.length - 1].time) / barMs) * Math.abs(lastX - prevX);
+    };
+
     const _pipDraw = (ctx, priceA, priceB, xA, xB, isDraft) => {
       const yA = this._trendPriceToY(priceA);
       const yB = this._trendPriceToY(priceB);
       if (yA === null || yB === null) return;
 
       const diff    = priceB - priceA;
-      const isPos   = diff >= 0;  // drew bottom-to-top => positive
+      const isPos   = diff >= 0;
       const pipSz   = (priceA < 10) ? 0.0001 : (priceA < 500 ? 0.01 : 1);
       const pips    = diff / pipSz;
       const dec     = this._symbolPriceFormat().dec;
-      const pipsTxt = (pips >= 0 ? "+" : "") + pips.toFixed(1) + " pips";
-      const priceTxt = (diff >= 0 ? "+" : "") + diff.toFixed(dec);
+      const pipsTxt = (pips >= 0 ? '+' : '') + pips.toFixed(1) + ' pips';
+      const priceTxt = (diff >= 0 ? '+' : '') + diff.toFixed(dec);
 
-      const GOLD    = isDraft ? "rgba(240,224,64,0.7)" : "rgba(240,224,64,0.95)";
-      const FILL    = isPos ? (isDraft ? "rgba(0,230,118,0.08)" : "rgba(0,230,118,0.13)")
-                            : (isDraft ? "rgba(255,61,90,0.08)"  : "rgba(255,61,90,0.13)");
-      const LINE    = isPos ? (isDraft ? "rgba(0,230,118,0.6)"  : "rgba(0,230,118,0.9)")
-                            : (isDraft ? "rgba(255,61,90,0.6)"   : "rgba(255,61,90,0.9)");
+      const GOLD  = isDraft ? 'rgba(240,224,64,0.7)' : 'rgba(240,224,64,0.95)';
+      const FILL  = isPos ? (isDraft ? 'rgba(0,230,118,0.08)' : 'rgba(0,230,118,0.13)')
+                          : (isDraft ? 'rgba(255,61,90,0.08)'  : 'rgba(255,61,90,0.13)');
+      const LINE  = isPos ? (isDraft ? 'rgba(0,230,118,0.6)'  : 'rgba(0,230,118,0.9)')
+                          : (isDraft ? 'rgba(255,61,90,0.6)'   : 'rgba(255,61,90,0.9)');
 
       const W       = cv.width;
       const xLeft   = Math.max(0, Math.min(xA, xB));
-      const xRight  = Math.min(W, Math.max(xA, xB));
+      const xRight  = Math.min(W - 2, Math.max(xA, xB));
       const yTop    = Math.min(yA, yB);
       const yBot    = Math.max(yA, yB);
       const boxW    = Math.max(xRight - xLeft, 40);
+      const spineX  = (xLeft + xRight) / 2;
+      const midY    = (yTop + yBot) / 2;
 
       // Shaded rectangle
       ctx.fillStyle = FILL;
       ctx.fillRect(xLeft, yTop, boxW, yBot - yTop);
 
-      // Horizontal cap lines (serif)
+      // Horizontal cap lines
       ctx.strokeStyle = LINE; ctx.lineWidth = 1.5; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(xLeft - 4, yA); ctx.lineTo(xRight + 4, yA); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(xLeft - 4, yB); ctx.lineTo(xRight + 4, yB); ctx.stroke();
 
-      // Vertical centre spine
-      const spineX = (xLeft + xRight) / 2;
+      // Vertical centre spine (dashed)
       ctx.strokeStyle = GOLD; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(spineX, yA); ctx.lineTo(spineX, yB); ctx.stroke();
       ctx.setLineDash([]);
 
-      // Arrow heads on spine
+      // Arrow heads
       const aw = 5;
       ctx.fillStyle = GOLD;
       ctx.beginPath(); ctx.moveTo(spineX, yA); ctx.lineTo(spineX - aw, yA + (isPos ? 10 : -10)); ctx.lineTo(spineX + aw, yA + (isPos ? 10 : -10)); ctx.closePath(); ctx.fill();
       ctx.beginPath(); ctx.moveTo(spineX, yB); ctx.lineTo(spineX - aw, yB + (isPos ? -10 : 10)); ctx.lineTo(spineX + aw, yB + (isPos ? -10 : 10)); ctx.closePath(); ctx.fill();
 
-      // Pip count badge (centre)
-      const midY  = (yTop + yBot) / 2;
-      const badge = pipsTxt;
-      ctx.font = "bold 12px JetBrains Mono, monospace";
-      const tw    = ctx.measureText(badge).width;
-      const bw    = tw + 14, bh = 20;
-      const bx    = spineX - bw / 2, by = midY - bh / 2;
-      ctx.fillStyle = isPos ? "rgba(0,140,70,0.92)" : "rgba(180,30,50,0.92)";
-      ctx.beginPath();
-      ctx.roundRect(bx, by, bw, bh, 4);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.textAlign  = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(badge, spineX, midY);
+      // Pip count badge
+      ctx.font = 'bold 12px JetBrains Mono, monospace';
+      const tw = ctx.measureText(pipsTxt).width;
+      const bw = tw + 14, bh = 20;
+      const bx = spineX - bw / 2, by = midY - bh / 2;
+      ctx.fillStyle = isPos ? 'rgba(0,140,70,0.92)' : 'rgba(180,30,50,0.92)';
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(pipsTxt, spineX, midY);
 
-      // Price difference label at end point
-      ctx.font = "10px JetBrains Mono, monospace";
+      // Price delta label
+      ctx.font = '10px JetBrains Mono, monospace';
       ctx.fillStyle = GOLD;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-      const labelX = xRight + 8;
-      ctx.fillText(priceTxt, labelX, yB - 4);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(priceTxt, xRight + 8, yB - 4);
 
       // Start / end price labels
-      ctx.font = "9px JetBrains Mono, monospace";
-      ctx.fillStyle = "rgba(200,200,200,0.7)";
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.fillStyle = 'rgba(200,200,200,0.7)';
       ctx.fillText(priceA.toFixed(dec), xLeft + 4, yA - 4);
       ctx.fillText(priceB.toFixed(dec), xLeft + 4, yB + 10);
 
-      // Delete X handle (committed rulers only)
+      // Delete ✕ button — anchored to top-right of shaded box (price-derived, scroll-stable)
       if (!isDraft) {
-        ctx.font = "bold 11px monospace";
-        ctx.fillStyle = "rgba(200,80,80,0.8)";
-        ctx.textAlign = "center";
-        ctx.fillText("u2715", xRight + 10, yTop + 12);
+        const btnX = xRight + 2;
+        const btnY = yTop - 2;
+        const btnR = 8;
+        ctx.fillStyle = 'rgba(180,50,50,0.85)';
+        ctx.beginPath(); ctx.arc(btnX, btnY, btnR, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u2715', btnX, btnY);
       }
+
+      ctx.textBaseline = 'alphabetic';
     };
 
-    // Committed rulers
+    // Committed rulers — derive X live from stored time
     for (const m of this._pipMeasures) {
-      _pipDraw(ctx, m.priceA, m.priceB, m.xA, m.xB, false);
+      const xA = _pipTimeToX(m.timeA) ?? m.xA ?? 60;
+      const xB = _pipTimeToX(m.timeB) ?? m.xB ?? 160;
+      _pipDraw(ctx, m.priceA, m.priceB, xA, xB, false);
     }
 
-    // Draft ruler during drag
+    // Draft ruler during drag — use raw pixel X (always current)
     if (this._pipDrawing) {
       const draftPrice = this._trendYToPrice(this._pipDrawing.currentY);
       if (draftPrice !== null) {
@@ -3058,15 +3079,19 @@ class ChartPane {
   _trendMouseDown(mx, my) {
     if (this.drawingMode) return false; // drawing mode handled separately
 
-    // ── Pip ruler: click the X delete handle to remove ───────────────────────
+    // ── Pip ruler: click the ✕ delete button (top-right corner, scroll-stable) ──
     for (const m of this._pipMeasures) {
-      const yA    = this._trendPriceToY(m.priceA);
-      const yB    = this._trendPriceToY(m.priceB);
+      const yA = this._trendPriceToY(m.priceA);
+      const yB = this._trendPriceToY(m.priceB);
       if (yA === null || yB === null) continue;
+      // Re-derive X from time just like the renderer does
+      const xA    = this._trendTimeToX(m.timeA) ?? m.xA ?? 60;
+      const xB    = this._trendTimeToX(m.timeB) ?? m.xB ?? 160;
       const yTop  = Math.min(yA, yB);
-      const xRight = Math.max(m.xA, m.xB);
-      // X handle is drawn at (xRight+10, yTop+12)
-      if (Math.abs(mx - (xRight + 10)) <= 10 && Math.abs(my - (yTop + 12)) <= 10) {
+      const cvW   = this._trendCanvas ? this._trendCanvas.width - 2 : 9999;
+      const xRight = Math.min(cvW, Math.max(xA, xB));
+      // ✕ button is a circle at (xRight+2, yTop-2) radius 8
+      if (Math.hypot(mx - (xRight + 2), my - (yTop - 2)) <= 12) {
         this._pipMeasures = this._pipMeasures.filter(x => x.id !== m.id);
         this._trendRender();
         return true;
@@ -3164,15 +3189,17 @@ class ChartPane {
     for (const v of this._vlines) {
       if (this._vlineHit(v, mx)) { if (chartEl) chartEl.style.cursor = 'ew-resize'; return true; }
     }
-    // Pip ruler delete X handle hover
+    // Pip ruler ✕ button hover — same geometry as _trendMouseDown
     for (const m of this._pipMeasures) {
-      const yA    = this._trendPriceToY(m.priceA);
-      const yB    = this._trendPriceToY(m.priceB);
+      const yA = this._trendPriceToY(m.priceA);
+      const yB = this._trendPriceToY(m.priceB);
       if (yA === null || yB === null) continue;
-      const yTop  = Math.min(yA, yB);
-      const xRight = Math.max(m.xA, m.xB);
-      if (Math.abs(mx - (xRight + 10)) <= 10 && Math.abs(my - (yTop + 12)) <= 10) {
-        if (chartEl) chartEl.style.cursor = "pointer";
+      const xA     = this._trendTimeToX(m.timeA) ?? m.xA ?? 60;
+      const xB     = this._trendTimeToX(m.timeB) ?? m.xB ?? 160;
+      const yTop   = Math.min(yA, yB);
+      const xRight = Math.max(xA, xB);
+      if (Math.hypot(mx - (xRight + 2), my - (yTop - 2)) <= 12) {
+        if (chartEl) chartEl.style.cursor = 'pointer';
         return true;
       }
     }
