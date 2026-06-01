@@ -4,13 +4,14 @@
  * Storage schema:
  *   "cs:EURUSD" → {
  *     drawings: { fibs, trendlines, hlines, vlines, positions },
- *     indicators: { "15m": ["rsi","macd"], "1h": ["bb"] },
+ *     indicators: ["rsi","macd"],   // per-symbol, shared across ALL intervals
  *     fibLevels: [0, 0.236, ...],   // per-symbol custom levels
  *     savedAt: <timestamp>
  *   }
  *
  * Drawings are shared across ALL intervals for a symbol (TradingView model).
- * Indicators are stored per-interval so each timeframe can have its own set.
+ * Indicators are also shared across ALL intervals for a symbol — adding an
+ * indicator on any timeframe makes it visible on every timeframe for that pair.
  */
 
 const StateStore = (() => {
@@ -45,7 +46,7 @@ const StateStore = (() => {
   function _empty() {
     return {
       drawings: { fibs: [], trendlines: [], hlines: [], vlines: [], positions: [] },
-      indicators: {},
+      indicators: [],
       fibLevels: null,
       savedAt: null,
     };
@@ -89,13 +90,12 @@ const StateStore = (() => {
   }
 
   /**
-   * Save the active indicator set for a specific symbol+interval.
+   * Save the active indicator set for a symbol (shared across all intervals).
    * indicators = Array of indicator ids, e.g. ["rsi", "macd"]
    */
-  function saveIndicators(symbol, interval, indicators) {
+  function saveIndicators(symbol, indicators) {
     const blob = _load(symbol) || _empty();
-    if (!blob.indicators) blob.indicators = {};
-    blob.indicators[interval] = indicators;
+    blob.indicators = indicators;
     return _save(symbol, blob);
   }
 
@@ -109,13 +109,20 @@ const StateStore = (() => {
   }
 
   /**
-   * Load indicators for a specific symbol+interval.
+   * Load indicators for a symbol (shared across all intervals).
    * Returns Array of indicator ids or [].
    */
-  function loadIndicators(symbol, interval) {
+  function loadIndicators(symbol) {
     const blob = _load(symbol);
-    if (!blob || !blob.indicators) return [];
-    return blob.indicators[interval] || [];
+    if (!blob) return [];
+    // Migration: handle old per-interval format { "15m": [...] }
+    if (blob.indicators && !Array.isArray(blob.indicators)) {
+      // Flatten all interval arrays into one deduplicated set
+      const merged = new Set();
+      Object.values(blob.indicators).forEach(arr => arr.forEach(id => merged.add(id)));
+      return [...merged];
+    }
+    return blob.indicators || [];
   }
 
   /**
@@ -160,8 +167,10 @@ const StateStore = (() => {
           (d.hlines     || []).length +
           (d.vlines     || []).length +
           (d.positions  || []).length;
-        const intervalCount = Object.keys(blob.indicators || {}).length;
-        results.push({ symbol, savedAt: blob.savedAt, drawingCount, intervalCount });
+        const indicatorCount = Array.isArray(blob.indicators)
+          ? blob.indicators.length
+          : Object.keys(blob.indicators || {}).length;
+        results.push({ symbol, savedAt: blob.savedAt, drawingCount, indicatorCount });
       } catch(e) {}
     }
     return results.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));

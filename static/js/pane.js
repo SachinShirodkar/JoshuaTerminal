@@ -3386,13 +3386,12 @@ class ChartPane {
   }
 
   /**
-   * Save the active indicator set for the current interval.
+   * Save the active indicator set for the current symbol (shared across all intervals).
    * Called automatically whenever indicators are toggled.
    */
   _saveIndicators() {
     window.StateStore.saveIndicators(
       this.symbol,
-      this.interval,
       [...this.activeIndicators]
     );
   }
@@ -3406,15 +3405,15 @@ class ChartPane {
   }
 
   /**
-   * Restore saved state for the current symbol+interval.
-   * Called after candles are loaded. Drawings are shared across intervals;
-   * indicators are per-interval.
+   * Restore saved state for the current symbol.
+   * Called after candles are loaded. Both drawings and indicators are shared
+   * across all intervals for a symbol.
    */
   _restoreState() {
     if (!window.StateStore) return;
 
-    // Restore indicators for this specific interval
-    const savedIndicators = window.StateStore.loadIndicators(this.symbol, this.interval);
+    // Restore indicators for this symbol (shared across all intervals)
+    const savedIndicators = window.StateStore.loadIndicators(this.symbol);
     if (savedIndicators && savedIndicators.length) {
       // Clear current set first to avoid duplicates
       [...this.activeIndicators].forEach(id => {
