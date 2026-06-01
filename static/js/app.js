@@ -384,6 +384,8 @@ const App = (() => {
       svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="1.5" cy="7" r="1.5" fill="currentColor"/><circle cx="12.5" cy="7" r="1.5" fill="currentColor"/></svg>' },
     { tool: 'vline', label: 'Vertical Line',    color: null,
       svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="1.5" r="1.5" fill="currentColor"/><circle cx="7" cy="12.5" r="1.5" fill="currentColor"/></svg>' },
+    { tool: 'pip',   label: 'Pip Ruler',         color: '#f0e040',
+      svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="2" y1="4" x2="2" y2="10" stroke="#f0e040" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="4" x2="12" y2="10" stroke="#f0e040" stroke-width="1.5" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="#f0e040" stroke-width="1.5" stroke-linecap="round"/><line x1="5" y1="5.5" x2="5" y2="8.5" stroke="#f0e040" stroke-width="1" stroke-linecap="round"/><line x1="7" y1="5" x2="7" y2="9" stroke="#f0e040" stroke-width="1" stroke-linecap="round"/><line x1="9" y1="5.5" x2="9" y2="8.5" stroke="#f0e040" stroke-width="1" stroke-linecap="round"/></svg>' },
   ];
 
   let _activeDrawPane = null;

@@ -112,6 +112,12 @@ class ChartPane {
     this._obCanvas        = null;   // canvas for Order Blocks overlay
     this._obData          = null;   // { bearishBlocks, bullishBlocks, bosLines }
 
+
+    // ── Pip measurement tool state ───────────────────────
+    this._pipDrawing      = null;  // { startPrice, startY, startX } during drag
+    this._pipMeasures     = [];    // [{ id, priceA, priceB, xA, xB }] committed rulers
+    this._pipIdCounter    = 0;
+    this._pipHoverId      = null;  // id of ruler under cursor (for delete)
     // ── Persistence state ────────────────────────────────
     this._isDirty         = false;  // true when there are unsaved changes
     this._dirtyTimer      = null;   // debounce handle
@@ -360,6 +366,9 @@ class ChartPane {
     this._trendClearAll();
     this._hlineClearAll();
     this._vlineClearAll();
+    this._pipMeasures = [];
+    this._pipDrawing  = null;
+    this._trendRender();
     this.markDirty();
   }
 
@@ -1131,6 +1140,7 @@ class ChartPane {
       btn.classList.toggle('active', this.drawingMode === tool);
       if (tool === 'long')  btn.style.color = this.drawingMode === 'long'  ? '#00e676' : '';
       if (tool === 'short') btn.style.color = this.drawingMode === 'short' ? '#ff3d5a' : '';
+      if (tool === 'pip')   btn.style.color = this.drawingMode === 'pip'   ? '#f0e040' : '';
     });
 
     const el = document.getElementById(`pane-chart-${this.id}`);
@@ -1180,6 +1190,11 @@ class ChartPane {
         this._clearPositionPreview();
         this._posDrawing = null;
         this.chart.applyOptions({ handleScale:{mouseWheel:true,pinch:true}, handleScroll:{mouseWheel:true,pressedMouseMove:true} });
+      if (this._pipDrawing) {
+        this._pipDrawing = null;
+        this.chart.applyOptions({ handleScale:{mouseWheel:true,pinch:true}, handleScroll:{mouseWheel:true,pressedMouseMove:true} });
+        this._trendRender();
+      }
       }
     });
   }
@@ -1296,6 +1311,18 @@ class ChartPane {
       this._fibDrawing = { startPrice: price, startTime: time, startY: y, series: [] };
       this._overlayEl.style.pointerEvents = 'none'; // let mousemove through to chart el
     }
+    if (this.drawingMode === 'pip') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.chart.applyOptions({ handleScale:{mouseWheel:false,pinch:false}, handleScroll:{mouseWheel:false,pressedMouseMove:false} });
+      const rect  = e.currentTarget.getBoundingClientRect();
+      const mx    = e.clientX - rect.left;
+      const my    = e.clientY - rect.top;
+      const price = this._pixelToPrice(my);
+      if (price === null) return;
+      this._pipDrawing = { startPrice: price, startY: my, startX: mx, currentY: my, currentX: mx };
+      return;
+    }
   }
 
   _onDrawMouseMove(e) {
@@ -1307,6 +1334,12 @@ class ChartPane {
     if (this._posDrawing) {
       const slPrice = this._pixelToPrice(my);
       if (slPrice !== null) this._drawPositionPreview(this._posDrawing.side, this._posDrawing.entryPrice, slPrice, this._posDrawing.startTime);
+      return;
+    }
+    if (this._pipDrawing) {
+      this._pipDrawing.currentY = my;
+      this._pipDrawing.currentX = mx;
+      this._trendRender();
       return;
     }
     if (this._trendDrawing) {
@@ -1364,6 +1397,26 @@ class ChartPane {
       return;
     }
     // Trendline endpoint drag is handled by document listeners in _onDrawMouseDown
+    if (this._pipDrawing) {
+      const rect2 = e.currentTarget.getBoundingClientRect();
+      const endPrice = this._pixelToPrice(e.clientY - rect2.top);
+      this.chart.applyOptions({ handleScale:{mouseWheel:true,pinch:true}, handleScroll:{mouseWheel:true,pressedMouseMove:true} });
+      if (endPrice !== null && Math.abs(endPrice - this._pipDrawing.startPrice) > 0.000001) {
+        const id = ++this._pipIdCounter;
+        this._pipMeasures.push({
+          id,
+          priceA: this._pipDrawing.startPrice,
+          priceB: endPrice,
+          xA: this._pipDrawing.startX,
+          xB: this._pipDrawing.currentX,
+        });
+      }
+      this._pipDrawing = null;
+      this.drawingMode = null;
+      this._updateDrawingUI();
+      this._trendRender();
+      return;
+    }
     if (!this._fibDrawing) return;
     const rect  = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -2860,6 +2913,107 @@ class ChartPane {
       ctx.setLineDash([5,3]); ctx.stroke(); ctx.setLineDash([]);
       this._trendDrawHandle(ctx, p.x1, p.y1, '#00c8ff');
     }
+
+    // ── Pip measurement rulers ────────────────────────────────────────────────
+    const _pipDraw = (ctx, priceA, priceB, xA, xB, isDraft) => {
+      const yA = this._trendPriceToY(priceA);
+      const yB = this._trendPriceToY(priceB);
+      if (yA === null || yB === null) return;
+
+      const diff    = priceB - priceA;
+      const isPos   = diff >= 0;  // drew bottom-to-top => positive
+      const pipSz   = (priceA < 10) ? 0.0001 : (priceA < 500 ? 0.01 : 1);
+      const pips    = diff / pipSz;
+      const dec     = this._symbolPriceFormat().dec;
+      const pipsTxt = (pips >= 0 ? "+" : "") + pips.toFixed(1) + " pips";
+      const priceTxt = (diff >= 0 ? "+" : "") + diff.toFixed(dec);
+
+      const GOLD    = isDraft ? "rgba(240,224,64,0.7)" : "rgba(240,224,64,0.95)";
+      const FILL    = isPos ? (isDraft ? "rgba(0,230,118,0.08)" : "rgba(0,230,118,0.13)")
+                            : (isDraft ? "rgba(255,61,90,0.08)"  : "rgba(255,61,90,0.13)");
+      const LINE    = isPos ? (isDraft ? "rgba(0,230,118,0.6)"  : "rgba(0,230,118,0.9)")
+                            : (isDraft ? "rgba(255,61,90,0.6)"   : "rgba(255,61,90,0.9)");
+
+      const W       = cv.width;
+      const xLeft   = Math.max(0, Math.min(xA, xB));
+      const xRight  = Math.min(W, Math.max(xA, xB));
+      const yTop    = Math.min(yA, yB);
+      const yBot    = Math.max(yA, yB);
+      const boxW    = Math.max(xRight - xLeft, 40);
+
+      // Shaded rectangle
+      ctx.fillStyle = FILL;
+      ctx.fillRect(xLeft, yTop, boxW, yBot - yTop);
+
+      // Horizontal cap lines (serif)
+      ctx.strokeStyle = LINE; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(xLeft - 4, yA); ctx.lineTo(xRight + 4, yA); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xLeft - 4, yB); ctx.lineTo(xRight + 4, yB); ctx.stroke();
+
+      // Vertical centre spine
+      const spineX = (xLeft + xRight) / 2;
+      ctx.strokeStyle = GOLD; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(spineX, yA); ctx.lineTo(spineX, yB); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Arrow heads on spine
+      const aw = 5;
+      ctx.fillStyle = GOLD;
+      ctx.beginPath(); ctx.moveTo(spineX, yA); ctx.lineTo(spineX - aw, yA + (isPos ? 10 : -10)); ctx.lineTo(spineX + aw, yA + (isPos ? 10 : -10)); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(spineX, yB); ctx.lineTo(spineX - aw, yB + (isPos ? -10 : 10)); ctx.lineTo(spineX + aw, yB + (isPos ? -10 : 10)); ctx.closePath(); ctx.fill();
+
+      // Pip count badge (centre)
+      const midY  = (yTop + yBot) / 2;
+      const badge = pipsTxt;
+      ctx.font = "bold 12px JetBrains Mono, monospace";
+      const tw    = ctx.measureText(badge).width;
+      const bw    = tw + 14, bh = 20;
+      const bx    = spineX - bw / 2, by = midY - bh / 2;
+      ctx.fillStyle = isPos ? "rgba(0,140,70,0.92)" : "rgba(180,30,50,0.92)";
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 4);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.textAlign  = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(badge, spineX, midY);
+
+      // Price difference label at end point
+      ctx.font = "10px JetBrains Mono, monospace";
+      ctx.fillStyle = GOLD;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      const labelX = xRight + 8;
+      ctx.fillText(priceTxt, labelX, yB - 4);
+
+      // Start / end price labels
+      ctx.font = "9px JetBrains Mono, monospace";
+      ctx.fillStyle = "rgba(200,200,200,0.7)";
+      ctx.fillText(priceA.toFixed(dec), xLeft + 4, yA - 4);
+      ctx.fillText(priceB.toFixed(dec), xLeft + 4, yB + 10);
+
+      // Delete X handle (committed rulers only)
+      if (!isDraft) {
+        ctx.font = "bold 11px monospace";
+        ctx.fillStyle = "rgba(200,80,80,0.8)";
+        ctx.textAlign = "center";
+        ctx.fillText("u2715", xRight + 10, yTop + 12);
+      }
+    };
+
+    // Committed rulers
+    for (const m of this._pipMeasures) {
+      _pipDraw(ctx, m.priceA, m.priceB, m.xA, m.xB, false);
+    }
+
+    // Draft ruler during drag
+    if (this._pipDrawing) {
+      const draftPrice = this._trendYToPrice(this._pipDrawing.currentY);
+      if (draftPrice !== null) {
+        _pipDraw(ctx, this._pipDrawing.startPrice, draftPrice,
+                 this._pipDrawing.startX, this._pipDrawing.currentX, true);
+      }
+    }
   }
 
   _trendDrawHandle(ctx, x, y, color) {
@@ -2903,6 +3057,21 @@ class ChartPane {
   // ── Mouse handling — called from _onDrawMouseDown/Move/Up ────────────────
   _trendMouseDown(mx, my) {
     if (this.drawingMode) return false; // drawing mode handled separately
+
+    // ── Pip ruler: click the X delete handle to remove ───────────────────────
+    for (const m of this._pipMeasures) {
+      const yA    = this._trendPriceToY(m.priceA);
+      const yB    = this._trendPriceToY(m.priceB);
+      if (yA === null || yB === null) continue;
+      const yTop  = Math.min(yA, yB);
+      const xRight = Math.max(m.xA, m.xB);
+      // X handle is drawn at (xRight+10, yTop+12)
+      if (Math.abs(mx - (xRight + 10)) <= 10 && Math.abs(my - (yTop + 12)) <= 10) {
+        this._pipMeasures = this._pipMeasures.filter(x => x.id !== m.id);
+        this._trendRender();
+        return true;
+      }
+    }
 
     // ── Hline hit / drag ────────────────────────────────
     for (const h of this._hlines) {
@@ -2994,6 +3163,18 @@ class ChartPane {
     }
     for (const v of this._vlines) {
       if (this._vlineHit(v, mx)) { if (chartEl) chartEl.style.cursor = 'ew-resize'; return true; }
+    }
+    // Pip ruler delete X handle hover
+    for (const m of this._pipMeasures) {
+      const yA    = this._trendPriceToY(m.priceA);
+      const yB    = this._trendPriceToY(m.priceB);
+      if (yA === null || yB === null) continue;
+      const yTop  = Math.min(yA, yB);
+      const xRight = Math.max(m.xA, m.xB);
+      if (Math.abs(mx - (xRight + 10)) <= 10 && Math.abs(my - (yTop + 12)) <= 10) {
+        if (chartEl) chartEl.style.cursor = "pointer";
+        return true;
+      }
     }
     return false;
   }
