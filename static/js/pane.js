@@ -81,7 +81,10 @@ class ChartPane {
     this.fibLevels        = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]; // editable
     this._overlayCanvas   = null;   // transparent canvas for mouse events during drag
     this._hoveredFibId    = null;   // fib currently under cursor
-    this._previewSeries   = null;   // series shown during drag preview
+    this._previewSeries   = null;   // legacy (unused — preview now canvas-only)
+    this._fibPreview      = null;   // { priceA, priceB } canvas preview during drag
+    this._fibRafId        = null;   // rAF handle for throttled preview redraws
+    this._fibPreviewPrice = null;   // latest price seen during drag
 
     // ── Trendline state ──────────────────────────────────
     this._trendlines      = [];   // [{ id, color, ptA:{price,time}, ptB:{price,time} }]
@@ -1179,7 +1182,12 @@ class ChartPane {
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._trendRender());
     // Persist bar spacing whenever the user zooms/scrolls
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this._saveBarSpacing());
-    this.chart.subscribeCrosshairMove(() => this._trendRender());
+    // Throttle: coalesce rapid crosshair events into one rAF redraw
+    let _trendRafId = null;
+    this.chart.subscribeCrosshairMove(() => {
+      if (_trendRafId) return;
+      _trendRafId = requestAnimationFrame(() => { _trendRafId = null; this._trendRender(); });
+    });
     // ── Chart-level events for drawing tools and trendline interaction ────────
     chartEl.addEventListener('mousedown', e => this._onDrawMouseDown(e));
     chartEl.addEventListener('mousemove', e => this._onDrawMouseMove(e));
@@ -1357,7 +1365,18 @@ class ChartPane {
     }
     if (!this._fibDrawing) return;
     const price = this._pixelToPrice(my);
-    if (price !== null) this._drawFibPreview(this._fibDrawing.startPrice, price);
+    if (price !== null) {
+      // Throttle: store latest price and coalesce redraws into one rAF
+      this._fibPreviewPrice = price;
+      if (!this._fibRafId) {
+        this._fibRafId = requestAnimationFrame(() => {
+          this._fibRafId = null;
+          if (this._fibDrawing && this._fibPreviewPrice !== null) {
+            this._drawFibPreview(this._fibDrawing.startPrice, this._fibPreviewPrice);
+          }
+        });
+      }
+    }
   }
 
   _onDrawMouseUp(e) {
@@ -1425,6 +1444,7 @@ class ChartPane {
     const endPrice = this._pixelToPrice(y);
     const endTime  = this._pixelToTime(e.clientX - rect.left);
     this.chart.applyOptions({ handleScale: { mouseWheel:true, pinch:true }, handleScroll: { mouseWheel:true, pressedMouseMove:true } });
+    if (this._fibRafId) { cancelAnimationFrame(this._fibRafId); this._fibRafId = null; }
     if (endPrice !== null && Math.abs(endPrice - this._fibDrawing.startPrice) > 0) {
       this._commitFib(this._fibDrawing.startPrice, endPrice);
       this.drawingMode = null;
@@ -1437,22 +1457,23 @@ class ChartPane {
 
   _cancelFibDrag() {
     this.chart.applyOptions({ handleScale: { mouseWheel:true, pinch:true }, handleScroll: { mouseWheel:true, pressedMouseMove:true } });
+    if (this._fibRafId) { cancelAnimationFrame(this._fibRafId); this._fibRafId = null; }
     this._clearFibPreview();
     this._fibDrawing = null;
   }
 
-  // ── Preview during drag (lightweight — just remove+re-add) ───────────────────
+  // ── Preview during drag — canvas-only, zero LWC series operations ────────────
   _clearFibPreview() {
-    if (this._previewSeries) {
-      this._previewSeries.forEach(s => { try { this.chart.removeSeries(s); } catch(e){} });
-      this._previewSeries = null;
-    }
+    // No LWC series to remove — preview lives on _trendCanvas only
+    this._previewSeries = null;
+    this._fibPreview = null;
   }
 
   _drawFibPreview(priceA, priceB) {
-    this._clearFibPreview();
     if (!this.candles.length) return;
-    this._previewSeries = this._buildFibSeries(priceA, priceB, 0.5);
+    // Store preview state and let _trendRender() draw it on canvas
+    this._fibPreview = { priceA, priceB };
+    this._trendRender();
   }
 
   // ── Commit final fib ─────────────────────────────────────────────────────────
@@ -3033,6 +3054,43 @@ class ChartPane {
       if (draftPrice !== null) {
         _pipDraw(ctx, this._pipDrawing.startPrice, draftPrice,
                  this._pipDrawing.startX, this._pipDrawing.currentX, true);
+      }
+    }
+
+    // ── Fib preview during drag — canvas lines, no LWC series ────────────────
+    if (this._fibPreview) {
+      const { priceA, priceB } = this._fibPreview;
+      const range = priceB - priceA;
+      const W = cv.width;
+      const dec = this._symbolPriceFormat().dec;
+      const FIB_COLORS_PREVIEW = {
+        0:     'rgba(120,120,120,0.6)',
+        0.236: 'rgba(100,181,246,0.6)',
+        0.382: 'rgba(129,199,132,0.6)',
+        0.5:   'rgba(255,183,77,0.6)',
+        0.618: 'rgba(229,115,115,0.6)',
+        0.786: 'rgba(186,104,200,0.6)',
+        1.0:   'rgba(120,120,120,0.6)',
+        1.272: 'rgba(100,181,246,0.6)',
+        1.414: 'rgba(129,199,132,0.6)',
+        1.618: 'rgba(229,115,115,0.6)',
+        2.0:   'rgba(186,104,200,0.6)',
+        2.618: 'rgba(255,183,77,0.6)',
+      };
+      for (const level of this.fibLevels) {
+        const price = priceA + range * level;
+        const y = this._trendPriceToY(price);
+        if (y === null) continue;
+        const color = FIB_COLORS_PREVIEW[level] || 'rgba(200,200,200,0.6)';
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = (level === 0 || level === 1.0) ? 2 : 1;
+        ctx.setLineDash([5, 3]); ctx.stroke(); ctx.setLineDash([]);
+        // Label
+        ctx.fillStyle = color;
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${(level * 100).toFixed(1)}%  ${price.toFixed(dec)}`, W - 8, y - 3);
       }
     }
   }
