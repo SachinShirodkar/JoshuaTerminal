@@ -743,13 +743,85 @@ function orderBlocks(data, inputRange = 25, showBearishBOS = false, showBullishB
     };
   }
 
+  // ─── RSI Divergence ─────────────────────────────────
+
+  function rsiDivergence(data, params = {}) {
+    const len = params.rsiPeriod || 14;
+    const lbR = params.pivotLookbackRight || 5;
+    const lbL = params.pivotLookbackLeft || 5;
+    const rangeUpper = params.maxLookbackRange || 60;
+    const rangeLower = params.minLookbackRange || 5;
+    const plotBull = params.plotBullish !== false;
+    const plotHiddenBull = params.plotHiddenBullish || false;
+    const plotBear = params.plotBearish !== false;
+    const plotHiddenBear = params.plotHiddenBearish || false;
+
+    const rsiData = rsi(data, len);
+
+    function findPivotLow(rsiArr, idx, lbL, lbR) {
+      if (idx < lbL || idx >= rsiArr.length - lbR) return false;
+      const centerVal = rsiArr[idx].value;
+      for (let i = 1; i <= lbL; i++) { if (rsiArr[idx - i].value <= centerVal) return false; }
+      for (let i = 1; i <= lbR; i++) { if (rsiArr[idx + i].value <= centerVal) return false; }
+      return true;
+    }
+
+    function findPivotHigh(rsiArr, idx, lbL, lbR) {
+      if (idx < lbL || idx >= rsiArr.length - lbR) return false;
+      const centerVal = rsiArr[idx].value;
+      for (let i = 1; i <= lbL; i++) { if (rsiArr[idx - i].value >= centerVal) return false; }
+      for (let i = 1; i <= lbR; i++) { if (rsiArr[idx + i].value >= centerVal) return false; }
+      return true;
+    }
+
+    const bullishDivs = [], hiddenBullishDivs = [], bearishDivs = [], hiddenBearishDivs = [];
+    let lastPivotLowIdx = -1, lastPivotLowRsi = null, lastPivotLowPrice = null;
+    let lastPivotHighIdx = -1, lastPivotHighRsi = null, lastPivotHighPrice = null;
+
+    for (let i = lbL; i < data.length - lbR; i++) {
+      const currentIdx = i + lbR;
+
+      if (findPivotLow(rsiData, i, lbL, lbR)) {
+        const currentRsi = rsiData[i].value;
+        const currentPrice = data[i].low;
+        if (lastPivotLowIdx !== -1) {
+          const barsSince = i - lastPivotLowIdx;
+          if (barsSince >= rangeLower && barsSince <= rangeUpper) {
+            if (currentRsi > lastPivotLowRsi && currentPrice < lastPivotLowPrice && plotBull)
+              bullishDivs.push({ time: data[currentIdx].time, value: currentRsi, type: 'bull' });
+            if (currentRsi < lastPivotLowRsi && currentPrice > lastPivotLowPrice && plotHiddenBull)
+              hiddenBullishDivs.push({ time: data[currentIdx].time, value: currentRsi, type: 'hbull' });
+          }
+        }
+        lastPivotLowIdx = i; lastPivotLowRsi = currentRsi; lastPivotLowPrice = currentPrice;
+      }
+
+      if (findPivotHigh(rsiData, i, lbL, lbR)) {
+        const currentRsi = rsiData[i].value;
+        const currentPrice = data[i].high;
+        if (lastPivotHighIdx !== -1) {
+          const barsSince = i - lastPivotHighIdx;
+          if (barsSince >= rangeLower && barsSince <= rangeUpper) {
+            if (currentRsi < lastPivotHighRsi && currentPrice > lastPivotHighPrice && plotBear)
+              bearishDivs.push({ time: data[currentIdx].time, value: currentRsi, type: 'bear' });
+            if (currentRsi > lastPivotHighRsi && currentPrice < lastPivotHighPrice && plotHiddenBear)
+              hiddenBearishDivs.push({ time: data[currentIdx].time, value: currentRsi, type: 'hbear' });
+          }
+        }
+        lastPivotHighIdx = i; lastPivotHighRsi = currentRsi; lastPivotHighPrice = currentPrice;
+      }
+    }
+
+    return { rsi: rsiData, bullish: bullishDivs, hiddenBullish: hiddenBullishDivs, bearish: bearishDivs, hiddenBearish: hiddenBearishDivs };
+  }
+
   return {
     sma, ema, vwap, vwma,
     bollingerBands, donchian, keltner,
     atr, rsi, macd, stochastic, adx, cci, obv, mfi, williamsR,
     supertrend, pivotPoints, volumeBars,
     ichimoku, parabolicSAR, cmf, momentum, stochRSI, sdZonesAutoFib, orderBlocks,
-    FairValueGap,
+    FairValueGap, rsiDivergence,
   };
 })();
 

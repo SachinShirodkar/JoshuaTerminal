@@ -32,18 +32,19 @@ const INDICATOR_DEFS = [
     { id:"volume", label:"Volume", color:"#546e7a", type:"subpane" },
   ]},
   { group: "Oscillators", items: [
-    { id:"rsi",      label:"RSI (14)",            color:"#ce93d8", type:"subpane" },
-    { id:"macd",     label:"MACD (12, 26, 9)",    color:"#2196f3", type:"subpane" },
-    { id:"stoch",    label:"Stochastic (14,3,3)", color:"#ff9800", type:"subpane" },
-    { id:"stochrsi", label:"Stoch RSI (14)",      color:"#e040fb", type:"subpane" },
-    { id:"atr",      label:"ATR (14)",            color:"#78909c", type:"subpane" },
-    { id:"adx",      label:"ADX (14)",            color:"#ef5350", type:"subpane" },
-    { id:"cci",      label:"CCI (20)",            color:"#ffa726", type:"subpane" },
-    { id:"cmf",      label:"CMF (20)",            color:"#26c6da", type:"subpane" },
-    { id:"obv",      label:"OBV",                 color:"#26c6da", type:"subpane" },
-    { id:"mfi",      label:"MFI (14)",            color:"#ec407a", type:"subpane" },
-    { id:"williams", label:"Williams %R",         color:"#00e676", type:"subpane" },
-    { id:"momentum", label:"Momentum (10)",       color:"#ffca28", type:"subpane" },
+    { id:"rsi",           label:"RSI (14)",            color:"#ce93d8", type:"subpane" },
+    { id:"rsi_divergence",label:"RSI Divergence",      color:"#2962FF", type:"subpane" },
+    { id:"macd",          label:"MACD (12, 26, 9)",    color:"#2196f3", type:"subpane" },
+    { id:"stoch",         label:"Stochastic (14,3,3)", color:"#ff9800", type:"subpane" },
+    { id:"stochrsi",      label:"Stoch RSI (14)",      color:"#e040fb", type:"subpane" },
+    { id:"atr",           label:"ATR (14)",            color:"#78909c", type:"subpane" },
+    { id:"adx",           label:"ADX (14)",            color:"#ef5350", type:"subpane" },
+    { id:"cci",           label:"CCI (20)",            color:"#ffa726", type:"subpane" },
+    { id:"cmf",           label:"CMF (20)",            color:"#26c6da", type:"subpane" },
+    { id:"obv",           label:"OBV",                 color:"#26c6da", type:"subpane" },
+    { id:"mfi",           label:"MFI (14)",            color:"#ec407a", type:"subpane" },
+    { id:"williams",      label:"Williams %R",         color:"#00e676", type:"subpane" },
+    { id:"momentum",      label:"Momentum (10)",       color:"#ffca28", type:"subpane" },
   ]},
   { group: "Others", items: [
    { id: "sd_zones_auto_fib", label: "S/D Zones & Auto Fib", color: "#5b9cf6", type: "overlay" },
@@ -1036,6 +1037,30 @@ class ChartPane {
           mainSeries.setData(d);
           subChart.addLineSeries({ color: 'rgba(255,61,90,0.3)',  lineWidth: 1, priceLineVisible: false }).setData(c.map(d => ({ time: d.time, value: 80 })));
           subChart.addLineSeries({ color: 'rgba(0,230,118,0.3)', lineWidth: 1, priceLineVisible: false }).setData(c.map(d => ({ time: d.time, value: 20 })));
+          break;
+        }
+        case 'rsi_divergence': {
+          const rsiDivResult = Indicators.rsiDivergence(c, {
+            rsiPeriod: 14, pivotLookbackRight: 5, pivotLookbackLeft: 5,
+            maxLookbackRange: 60, minLookbackRange: 5,
+            plotBullish: true, plotHiddenBullish: false,
+            plotBearish: true, plotHiddenBearish: false,
+          });
+          // RSI line
+          mainSeries = subChart.addLineSeries({ color: '#2962FF', lineWidth: 2, priceLineVisible: false });
+          mainSeries.setData(rsiDivResult.rsi);
+          // Reference lines at 70, 50, 30
+          subChart.addLineSeries({ color: 'rgba(255,61,90,0.3)',   lineWidth: 1, priceLineVisible: false }).setData(c.map(d => ({ time: d.time, value: 70 })));
+          subChart.addLineSeries({ color: 'rgba(120,123,134,0.3)', lineWidth: 1, priceLineVisible: false }).setData(c.map(d => ({ time: d.time, value: 50 })));
+          subChart.addLineSeries({ color: 'rgba(0,230,118,0.3)',   lineWidth: 1, priceLineVisible: false }).setData(c.map(d => ({ time: d.time, value: 30 })));
+          // Divergence markers as scatter points
+          const markerData = [
+            ...rsiDivResult.bullish      .map(d => ({ time: d.time, position: 'belowBar', color: '#00FF00',              shape: 'circle', text: 'Bull'  })),
+            ...rsiDivResult.hiddenBullish.map(d => ({ time: d.time, position: 'belowBar', color: 'rgba(0,255,0,0.5)',    shape: 'circle', text: 'HBull' })),
+            ...rsiDivResult.bearish      .map(d => ({ time: d.time, position: 'aboveBar', color: '#FF0000',              shape: 'circle', text: 'Bear'  })),
+            ...rsiDivResult.hiddenBearish.map(d => ({ time: d.time, position: 'aboveBar', color: 'rgba(255,0,0,0.5)',    shape: 'circle', text: 'HBear' })),
+          ].sort((a, b) => a.time - b.time);
+          if (markerData.length) mainSeries.setMarkers(markerData);
           break;
         }
       }
