@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: Candle countdown timer added — live ⏱ countdown in ticker bar, adaptive format per timeframe, urgency pulse when <10% of candle remains_
+_Last updated: RSI Divergence indicator added — regular and hidden bull/bear divergences via pivot point logic, rendered as LWC markers in a subpane alongside RSI line and 30/50/70 reference lines_
 
 ---
 
@@ -188,11 +188,12 @@ Playwright runs in an isolated browser profile with empty localStorage. The brid
 - ✅ Lock toggle (🔓/🔒) on all drawing panels — persisted in save state
 - ✅ Click any line to reopen its panel
 
-### Indicators (28+)
+### Indicators (29+)
 - ✅ SMA/EMA (20/50/200), VWAP, VWMA
 - ✅ Bollinger, Donchian, Keltner
 - ✅ Supertrend, Ichimoku, Parabolic SAR, Pivot Points
 - ✅ Volume, RSI, MACD, Stochastic, Stoch RSI, ATR, ADX, CCI, CMF, OBV, MFI, Williams %R, Momentum
+- ✅ RSI Divergence (subpane) — regular + hidden bull/bear divergences via pivot logic, LWC markers
 - ✅ S/D Zones & Auto Fib (canvas), Order Blocks (canvas), Fair Value Gap / FVG (canvas)
 
 ---
@@ -396,3 +397,28 @@ When remaining time ≤ 10% of the full candle duration (e.g. last 30s of a 5m c
 ### Key files changed
 - `static/js/pane.js` — `_startCandleCountdown()`, `_stopCandleCountdown()`, `_formatCountdown()` methods added; `this._startCandleCountdown()` call added at end of `_renderCandles()`
 - `static/css/style.css` — `.ticker-countdown`, `.ticker-countdown.countdown-urgent`, `@keyframes countdown-pulse`, `.ticker-time-sep` rules added
+
+---
+
+## RSI Divergence — Implementation Notes
+
+### What it does
+Detects regular and hidden RSI divergences using pivot point logic and renders them in a subpane alongside the RSI line and 30/50/70 reference levels.
+
+### Detection logic
+- A pivot low (high) is confirmed when the RSI value at index `i` is lower (higher) than all values within `lbL` bars left and `lbR` bars right
+- Consecutive pivots are compared only if they fall within `[minLookbackRange, maxLookbackRange]` bars of each other
+- **Regular Bullish:** RSI higher low + price lower low | **Regular Bearish:** RSI lower high + price higher high
+- **Hidden Bullish:** RSI lower low + price higher low | **Hidden Bearish:** RSI higher high + price lower high
+- Pine Script `offset` plotting simulated by using `data[i + lbR].time` for marker timestamps
+
+### Rendering
+- RSI line: `#2962FF`, lineWidth 2
+- Reference lines at 70 (red tint), 50 (grey tint), 30 (green tint)
+- Divergence markers via LWC `setMarkers()` on the RSI series — circles above/below bar with text labels
+- Hidden divergences use semi-transparent colours; disabled by default
+
+### Key files changed
+- `static/js/indicators.js` — `rsiDivergence()` added inside IIFE, exported in return statement; calls internal `rsi()` directly
+- `static/js/pane.js` — `{ id: "rsi_divergence", label: "RSI Divergence", color: "#2962FF", type: "subpane" }` added to Oscillators group in `INDICATOR_DEFS`; `case 'rsi_divergence':` added to `_addSubPane()` switch
+- `_removeIndicator()` — no changes needed; subpane cleanup handled by existing generic `this.subPanes[id]` block

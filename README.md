@@ -10,7 +10,7 @@ Includes an integrated AI analysis pipeline that captures your charts (with all 
 
 - **Multi-chart grid** — 1, 2, 4, 6, or 8 panes, each fully independent
 - **Live prices** — OANDA v20 real-time streaming (forex), Hyperliquid WebSocket (crypto), yfinance fallback
-- **27+ technical indicators** — MAs, Bollinger, Keltner, Donchian, Ichimoku, Parabolic SAR, RSI, MACD, Stoch RSI, CMF, Momentum, S/D Zones & Auto Fib, Order Blocks, and more
+- **28+ technical indicators** — MAs, Bollinger, Keltner, Donchian, Ichimoku, Parabolic SAR, RSI, RSI Divergence, MACD, Stoch RSI, CMF, Momentum, S/D Zones & Auto Fib, Order Blocks, and more
 - **Drawing tools** — Fibonacci, Trendlines, Horizontal/Vertical lines, Long/Short position blocks with risk calculator
 - **Candle style** — fully configurable candle colours (bull/bear fill, border, wick); transparent/hollow candle mode
 - **Lock drawings** — trendlines, horizontal lines, vertical lines, and position blocks can be locked to prevent accidental moves
@@ -211,6 +211,6 @@ See `SETUP.md` Section 8 for full details including virtualenv usage and SSL cer
 
 **Add a data source:** Implement `get_candles()` and `get_price()` in `data_source.py`.
 
-**Add an indicator:** Add maths to `indicators.js`, definition to `INDICATOR_DEFS` in `pane.js`, case to `_addIndicator()`.
+**Add an indicator:** Add maths to `indicators.js`, definition to `INDICATOR_DEFS` in `pane.js`, case to `_addIndicator()` (or `_addSubPane()` for subpane types). See `Indicators.md` for conversion notes.
 
 **Add an alert type:** Call `AlertEngine.trigger(payload)` — the engine handles browser and Telegram delivery automatically.
