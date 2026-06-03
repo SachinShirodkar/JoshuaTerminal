@@ -34,7 +34,7 @@ This indicator draws rectangular zones representing three-candle price imbalance
 
 **Features not implemented:** dashboard overlay, multi-timeframe mode (could be added as UI enhancements).
 
-**Parameters** (hardcoded defaults, adjust in `_addIndicator` case in `pane.js`):
+**Parameters** (hardcoded defaults, adjust in `_addSubPane` case in `pane.js`):
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -43,3 +43,47 @@ This indicator draws rectangular zones representing three-candle price imbalance
 | showLast | 0 | 0 = show all FVGs. N = show only N most-recent unmitigated FVGs |
 | dynamic | false | Show horizontal dynamic level lines tracking current bull/bear FVG levels |
 | EXTEND_BARS | 20 | Bars forward to extend unmitigated zone rectangles (set in `_fvgRender`) |
+
+## RSI Divergence
+
+Detects regular and hidden bullish/bearish divergences between price and RSI using pivot point logic. Converted from Pine Script where `offset` plotting is simulated by looking ahead `lbR` bars when placing divergence markers.
+
+**Detection logic:**
+- Pivots are found by checking that a given RSI bar is the highest/lowest value within `lbL` bars to the left and `lbR` bars to the right
+- Two consecutive pivot lows (or highs) are compared. The gap between them must fall within `[minLookbackRange, maxLookbackRange]` bars
+- **Regular Bullish:** RSI makes higher low + price makes lower low — momentum recovering before price
+- **Regular Bearish:** RSI makes lower high + price makes higher high — momentum fading before price
+- **Hidden Bullish:** RSI makes lower low + price makes higher low — trend continuation signal
+- **Hidden Bearish:** RSI makes higher high + price makes lower high — trend continuation signal
+
+**Visual representation:**
+- RSI line drawn in blue (`#2962FF`), lineWidth 2
+- Reference lines at 70 (red tint), 50 (grey tint), and 30 (green tint)
+- Divergence markers rendered via LWC `setMarkers()` on the RSI series:
+  - Regular Bullish: green circle (`#00FF00`) below bar, labelled `Bull`
+  - Hidden Bullish: semi-transparent green (`rgba(0,255,0,0.5)`) below bar, labelled `HBull`
+  - Regular Bearish: red circle (`#FF0000`) above bar, labelled `Bear`
+  - Hidden Bearish: semi-transparent red (`rgba(255,0,0,0.5)`) above bar, labelled `HBear`
+
+**Notes:**
+- Pine Script's `offset` plotting is simulated by indexing `data[i + lbR]` for marker placement — may show slight positional differences from the original Pine version
+- Hidden divergences are disabled by default (`plotHiddenBullish: false`, `plotHiddenBearish: false`) — enable by editing the params object in `_addSubPane`
+- No changes needed to `_removeIndicator()` — subpane cleanup is handled by the existing generic `this.subPanes[id]` block
+
+**Parameters** (hardcoded defaults, adjust in `_addSubPane` case in `pane.js`):
+
+| Parameter | Default | Description |
+|---|---|---|
+| rsiPeriod | 14 | RSI calculation period |
+| pivotLookbackLeft | 5 | Bars to the left required to confirm a pivot |
+| pivotLookbackRight | 5 | Bars to the right required to confirm a pivot |
+| minLookbackRange | 5 | Minimum bar distance between two pivots to qualify as a divergence |
+| maxLookbackRange | 60 | Maximum bar distance between two pivots to qualify as a divergence |
+| plotBullish | true | Show regular bullish divergence markers |
+| plotHiddenBullish | false | Show hidden bullish divergence markers |
+| plotBearish | true | Show regular bearish divergence markers |
+| plotHiddenBearish | false | Show hidden bearish divergence markers |
+
+**Key files changed:**
+- `static/js/indicators.js` — `rsiDivergence()` function added + exported in return statement
+- `static/js/pane.js` — `INDICATOR_DEFS` entry added (Oscillators group), `rsi_divergence` case added to `_addSubPane()` switch
