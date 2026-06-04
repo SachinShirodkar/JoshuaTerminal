@@ -1,5 +1,5 @@
 # Joshua Terminal — Claude Context File
-_Last updated: RSI Divergence indicator added — regular and hidden bull/bear divergences via pivot point logic, rendered as LWC markers in a subpane alongside RSI line and 30/50/70 reference lines_
+_Last updated: MT5 multi-source data layer — MetaTrader 5 bridge added as top-priority forex source; per-pane source freedom; all four sources (MT5, OANDA, YF, Hyperliquid) independently selectable per chart pane_
 
 ---
 
@@ -13,9 +13,10 @@ _Last updated: RSI Divergence indicator added — regular and hidden bull/bear d
 |---|---|
 | Backend | Python 3.9+, Flask, Flask-SocketIO (threading mode), python-dotenv |
 | Frontend | Vanilla JS (no framework), Lightweight Charts v4.1.3 |
-| Forex live prices | OANDA v20 REST + HTTP streaming (primary) |
+| Forex live prices (primary) | MetaTrader 5 via `mt5_bridge.py` HTTP bridge (when `MT5_ENABLED=true`) |
+| Forex live prices (secondary) | OANDA v20 REST + HTTP streaming |
 | Crypto live prices | Hyperliquid WebSocket (allMids) |
-| Forex candles fallback | yfinance (when no OANDA key) |
+| Forex candles fallback | yfinance (when no OANDA key and MT5 not enabled) |
 | Styling | Plain CSS with CSS variables, JetBrains Mono + Syne fonts |
 | Alerts | Browser Web Notifications API + Telegram Bot API |
 | Snapshot rendering | Playwright (headless Chromium) |
@@ -26,9 +27,11 @@ _Last updated: RSI Divergence indicator added — regular and hidden bull/bear d
 ## File Structure
 ```
 joshua_terminal/
-├── app.py                    # Flask backend + SocketIO + OANDA stream + HL WS + alert endpoint
+├── app.py                    # Flask backend + SocketIO + OANDA stream + HL WS + MT5 poller + alert endpoint
 │                             # + registers snapshot_bp + starts HTTP sidecar via init_app()
-├── data_source.py            # Pluggable data layer — OANDA v20, yfinance fallback
+├── data_source.py            # Pluggable data layer — MT5 bridge (primary), OANDA v20, yfinance fallback
+├── mt5_bridge.py             # Standalone HTTP bridge — run on Windows MT5 machine (same LAN or localhost)
+│                             # Exposes /health /price /candles /symbols — read-only, MIT licensed
 ├── snapshot_routes.py        # Snapshot system blueprint — state API + Playwright renderer + cleanup
 ├── snapshot_state.json       # Server-side drawing/indicator state (auto-created, gitignore this)
 ├── snapshots/                # Output PNGs from Playwright (auto-created, auto-cleaned after 7 days)
@@ -147,8 +150,30 @@ Playwright runs in an isolated browser profile with empty localStorage. The brid
 - ✅ Symbol autocomplete dropdown (Majors/Minors/Exotics/Metals/Indices/Crypto)
 - ✅ Fullscreen mode, dark/light theme toggle, multi-monitor support
 - ✅ Screenshot/export — composites all canvas layers, downloads as PNG
-- ✅ Connection status dots — HL, YF, OANDA
+- ✅ Connection status dots — MT5, HL, YF, OANDA (all independent, correctly driven)
 - ✅ Live candle advance — `onPriceUpdate()` detects bar boundary
+
+### MT5 Multi-Source Data Layer
+- ✅ `mt5_bridge.py` — standalone read-only HTTP bridge for Windows/MT5 machine; MIT licensed
+  - `GET /health` — bridge + MT5 terminal status
+  - `GET /price?symbol=EURUSD` — live bid/ask/mid (250ms tick cache, background poller)
+  - `GET /candles?symbol=EURUSD&interval=1h&limit=300` — OHLCV oldest-first (LWC format)
+  - `GET /symbols?q=EUR` — broker symbol discovery
+  - Works same-machine (localhost) or over LAN — no config change on bridge side
+  - `threaded=True` Flask mode — slow MT5 calls never block other requests
+  - `symbol_select()` deferred to poller thread, never on request thread (avoids timeout)
+- ✅ `data_source.py` — MT5 as top-priority source: **mt5 → oanda → yfinance**
+  - `mt5_get_price()` / `mt5_get_candles()` — HTTP calls to bridge with fallback chain
+  - `mt5_is_connected()` — health check for status dot polling
+  - `MT5_ENABLED`, `MT5_BRIDGE_HOST`, `MT5_BRIDGE_PORT` env vars
+- ✅ `app.py` — `mt5_poll_loop` daemon thread; emits `mt5_price` via SocketIO every 500ms
+- ✅ Per-pane source freedom — all four sources independently selectable per chart pane
+  - Source dropdown: MetaTrader 5 / OANDA / Yahoo Finance / Hyperliquid (Crypto)
+  - `subscribe_yf` / `unsubscribe_yf` route by **pane source** (not global `ACTIVE_FOREX_SOURCE`)
+  - Pane sends `{ symbol, source }` in socket payload — server routes to correct stream
+  - Mix MT5 + OANDA + YF + Hyperliquid panes simultaneously with no cross-contamination
+- ✅ MT5 status dot — polls `/api/mt5/status` every 10s; green=connected, red=unreachable
+- ✅ OANDA dot — correctly turns green when `has_oanda_key` is true (was always grey before)
 
 ### Snapshot / AI Analysis Pipeline
 - ✅ `POST /api/snapshot` — Playwright headless render of full JT chart
@@ -275,6 +300,11 @@ SSL_CERT=localhost.pem      # optional — enables PWA standalone mode
 SSL_KEY=localhost-key.pem
 SNAPSHOT_KEEP_DAYS=7        # optional — days to retain snapshot PNGs (0 = keep forever)
 
+# MT5 Bridge — optional, enables MetaTrader 5 as primary price source
+MT5_ENABLED=true
+MT5_BRIDGE_HOST=192.168.1.20   # LAN IP of Windows MT5 machine, or localhost
+MT5_BRIDGE_PORT=5006
+
 # Analysis pipeline (.env in forex_automation folder)
 ANTHROPIC_API_KEY=your_key
 ANTHROPIC_MODEL=claude-opus-4-5
@@ -299,6 +329,35 @@ SNAPSHOT_KEEP_DAYS=7        # optional — passed through to JT
 - [ ] **Indicator alerts** — AlertEngine.trigger() already generic, need RSI/MACD crossing calls
 - [ ] **Notes export** — download as CSV or PDF
 - [ ] **Candle colours in popout** — popout.html has its own `openDrawFlyout()` needing candle style section
+
+---
+
+## MT5 Bridge — Architecture Notes
+
+### Why a separate bridge process
+The `MetaTrader5` Python package is Windows-only (IPC to the MT5 terminal process). `mt5_bridge.py` runs on the Windows machine and exposes a plain HTTP API so JT (on any OS) can consume MT5 data without platform constraints.
+
+### Tick polling vs streaming
+MT5's Python API is poll-based — there is no push/callback. `mt5_bridge.py` runs a 250ms background thread that polls `symbol_info_tick()` for all subscribed symbols and caches the latest tick. `/price` responses are served from cache and are effectively instant. `app.py`'s `mt5_poll_loop` polls `/price` every 500ms and emits `mt5_price` via SocketIO.
+
+### symbol_select() placement (critical)
+`mt5.symbol_select(symbol, True)` can block for several seconds when a symbol isn't in Market Watch (broker round-trip). It must **never** be called on the Flask request thread — this causes timeouts. It is called only in the poller thread where blocking is safe. The request thread tries `symbol_info_tick()` directly first, and only calls `symbol_select()` as a one-time fallback on first request for an unknown symbol.
+
+### Per-pane source routing
+`subscribe_yf` / `unsubscribe_yf` SocketIO events now carry `{ symbol, source }`. The server routes based on `source`:
+- `"mt5"` → `mt5_subs` dict (polled by `mt5_poll_loop`)
+- `"oanda"` → `OandaStreamManager` (persistent HTTP stream)
+- anything else → `yf_subs` dict (polled by `poll_loop`)
+
+This allows any combination of sources across panes simultaneously.
+
+### Multiple MT5 installs
+Run multiple bridge instances on different ports — one per MT5 terminal install:
+```bash
+python mt5_bridge.py --path "C:\Users\ss\AppData\Local\Demo\terminal64.exe" --port 5006
+python mt5_bridge.py --path "C:\Users\ss\AppData\Local\Live\terminal64.exe" --port 5007
+```
+Point JT at whichever port via `MT5_BRIDGE_PORT` in `.env`.
 
 ---
 

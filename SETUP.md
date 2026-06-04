@@ -7,7 +7,8 @@
 | Python | 3.9 or later | Check with: `python --version` |
 | pip | Any modern version | Comes with Python |
 | Browser | Chrome / Edge | Chrome recommended for PWA install |
-| OANDA account | Practice or Live | Free at oanda.com — needed for real-time forex |
+| OANDA account | Practice or Live | Optional — free at oanda.com. Not needed if using MT5 |
+| MetaTrader 5 | Any recent build | Optional — Windows only. Free demo accounts available from most brokers |
 
 > **macOS service:** If you plan to run Joshua Terminal as a background service via launchd, see [Section 8 — Run as a macOS Service](#8-run-as-a-macos-service).
 
@@ -64,7 +65,14 @@ cp .env.example .env
 Open `.env` in a text editor:
 
 ```
-# OANDA — real-time forex prices and candle data
+# ── Data source priority: MT5 → OANDA → yfinance ──────────────────────────
+
+# MetaTrader 5 — highest priority forex source (requires mt5_bridge.py running on Windows)
+MT5_ENABLED=true
+MT5_BRIDGE_HOST=192.168.1.20   # LAN IP of Windows MT5 machine, or "localhost" if same machine
+MT5_BRIDGE_PORT=5006
+
+# OANDA — real-time forex prices and candle data (used if MT5 not enabled)
 OANDA_API_KEY=your_personal_access_token
 OANDA_ACCOUNT_ID=your_account_id
 OANDA_ENV=practice          # use 'live' for a real-money account
@@ -81,11 +89,51 @@ SSL_KEY=localhost-key.pem
 SNAPSHOT_KEEP_DAYS=7        # days to keep analysis PNGs (0 = keep forever)
 ```
 
-### Getting OANDA credentials
+> You only need one forex source. Set `MT5_ENABLED=true` if you have MetaTrader 5 running. Otherwise set OANDA credentials. If neither is set, yfinance is used as a fallback (delayed data).
+
+### Getting OANDA credentials (optional)
 
 1. Go to [oanda.com](https://www.oanda.com/) and create a free practice account
 2. In **My Account → Manage API Access**, generate a Personal Access Token
 3. Copy your Account ID from the account dashboard
+
+### Setting up MetaTrader 5 as a price source (optional)
+
+MT5 gives you live prices directly from your broker with no additional account setup — if you already have MT5 running, this is the fastest path to real-time data.
+
+**On the Windows machine where MT5 is installed:**
+
+```bash
+# Install dependencies (one time)
+pip install flask MetaTrader5
+
+# Start the bridge (keep this terminal open)
+python mt5_bridge.py
+```
+
+Find your Windows machine's LAN IP:
+```
+ipconfig   →   look for IPv4 Address under your WiFi adapter
+e.g. 192.168.1.20
+```
+
+Test from another machine:
+```bash
+curl http://192.168.1.20:5006/health
+```
+
+**In Joshua Terminal's `.env`:**
+```
+MT5_ENABLED=true
+MT5_BRIDGE_HOST=192.168.1.20   # or localhost if MT5 is on the same machine
+MT5_BRIDGE_PORT=5006
+```
+
+> **Multiple MT5 installs?** Run one bridge per terminal on different ports. Point `MT5_BRIDGE_PORT` at whichever instance you want as the active source.
+
+> **Broker symbol names** vary (EURUSD, EURUSDm, EURUSD.raw etc.). If prices aren't loading, call `http://<bridge-ip>:5006/symbols?q=EUR` to see your broker's exact naming.
+
+> The bridge is **read-only**. It never places orders or accesses account credentials.
 
 ### Getting Telegram credentials (optional)
 
@@ -116,10 +164,12 @@ The startup banner shows which data source is active:
 
 ```
 ╔═══════════════════════════════════════════════╗
-║  Joshua Terminal   →  http://localhost:5050    ║
-║  Forex source: oanda                          ║
+║  Joshua Terminal   →  https://localhost:5050  ║
+║  Forex source: mt5                           ║
 ╚═══════════════════════════════════════════════╝
 ```
+
+Source priority is **MT5 → OANDA → yfinance**. The topbar shows a live status dot for each source — green means connected, grey means not configured, red means configured but unreachable.
 
 ---
 
@@ -334,6 +384,10 @@ On Linux, launchd is replaced by systemd. The Python code and `.env` are identic
 |---|---|
 | Changes don't appear after update | Hard refresh: `Cmd+Shift+R` (Mac) or `Ctrl+Shift+R` (Windows/Linux) |
 | No OANDA data | Check `.env` has correct keys. Visit `/debug` to verify connections |
+| MT5 dot red / prices not updating | Check `mt5_bridge.py` is running on Windows. Test: `curl http://<ip>:5006/health` |
+| MT5 bridge timeout on first request | Normal on very first symbol load — bridge is adding symbol to Market Watch. Subsequent requests are instant |
+| MT5 wrong symbol name | Call `http://<bridge-ip>:5006/symbols?q=EUR` to see your broker's exact symbol names |
+| MT5 prices loading but candles empty | Symbol may not have history on this broker/timeframe. Try a different interval |
 | Telegram alerts not firing | Check `TELEGRAM_CHAT_ID` — group chat IDs are negative numbers |
 | Drawings disappeared | Click SAVE — drawings are not auto-saved. Check Saved States manager |
 | Snapshot returns 500 | Check JT console for error. Ensure `playwright install chromium` was run with the same Python that runs `app.py` |
