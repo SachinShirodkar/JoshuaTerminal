@@ -75,11 +75,13 @@ const App = (() => {
       console.log('Socket connected');
       setDot('dot-hl', 'live');
       setDot('dot-yf', 'live');
-      // MT5 dot is driven by polling /api/mt5/status, not the socket connection
+      if (appConfig.has_oanda_key) setDot('dot-oanda', 'live');
+      // MT5 dot is driven by /api/mt5/status polling independently
     });
     socket.on('disconnect', () => {
       setDot('dot-hl', '');
       setDot('dot-yf', '');
+      setDot('dot-oanda', '');
     });
 
     // Hyperliquid: batch allMids
@@ -107,7 +109,7 @@ const App = (() => {
     socket.on('oanda_price', data => {
       const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
       panes.forEach(p => {
-        if (p.source !== 'hyperliquid' && p.source !== 'mt5' && norm(p.symbol) === norm(data.symbol)) {
+        if (p.source === 'oanda' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
         }
       });
@@ -117,7 +119,7 @@ const App = (() => {
     socket.on('yf_price', data => {
       const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
       panes.forEach(p => {
-        if (p.source !== 'hyperliquid' && p.source !== 'mt5' && norm(p.symbol) === norm(data.symbol)) {
+        if (p.source === 'yfinance' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
         }
       });
