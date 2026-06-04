@@ -300,6 +300,42 @@ def poll_loop():
 threading.Thread(target=poll_loop, daemon=True).start()
 
 
+# ─── MT5 bridge polling (used when MT5_ENABLED=true) ─────────────────────────
+# Polls the mt5_bridge.py HTTP endpoint every 500 ms per subscribed symbol.
+# Emits "mt5_price" via Socket.IO — identical shape to oanda_price / yf_price.
+
+mt5_subs = {}   # symbol → prev_price
+mt5_lock  = threading.Lock()
+
+def mt5_poll_loop():
+    while True:
+        time.sleep(0.5)
+        if ds.ACTIVE_FOREX_SOURCE != "mt5":
+            continue
+        with mt5_lock:
+            symbols = list(mt5_subs.keys())
+        for sym in symbols:
+            try:
+                info  = ds.mt5_get_price(sym)
+                price = info.get("price", 0)
+                if not price:
+                    continue
+                prev = mt5_subs.get(sym) or price
+                with mt5_lock:
+                    mt5_subs[sym] = price
+                socketio.emit("mt5_price", {
+                    "symbol":     sym,
+                    "price":      price,
+                    "change":     info.get("change", 0),
+                    "change_pct": info.get("change_pct", 0),
+                    "dir":        "up" if price >= prev else "down",
+                })
+            except Exception as e:
+                logger.warning(f"MT5 poll {sym}: {e}")
+
+threading.Thread(target=mt5_poll_loop, daemon=True).start()
+
+
 # ─── Hyperliquid candle REST ─────────────────────────────────────────────────
 
 HL_IV = {"1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
@@ -417,7 +453,18 @@ def api_config():
         "has_oanda_key":    bool(ds.OANDA_API_KEY),
         "has_oanda_account":bool(ds.OANDA_ACCOUNT_ID),
         "oanda_env":        ds.OANDA_ENV,
+        "mt5_enabled":      ds.MT5_ENABLED,
+        "has_mt5":          ds.MT5_ENABLED and ds.mt5_is_connected(),
     })
+
+
+@app.route("/api/mt5/status")
+def api_mt5_status():
+    """Live MT5 bridge connectivity check — polled by the frontend status dot."""
+    if not ds.MT5_ENABLED:
+        return jsonify({"ok": False, "reason": "MT5 not enabled"})
+    connected = ds.mt5_is_connected()
+    return jsonify({"ok": connected})
 
 
 @app.route("/api/alert", methods=["POST"])
@@ -460,8 +507,10 @@ def on_sub_yf(data):
     sym = data.get("symbol","").upper()
     if not sym: return
     if ds.ACTIVE_FOREX_SOURCE == "oanda":
-        # Route to OANDA streaming instead of YF polling
         oanda_stream.subscribe(sym)
+    elif ds.ACTIVE_FOREX_SOURCE == "mt5":
+        with mt5_lock:
+            mt5_subs.setdefault(sym, 0)
     else:
         with yf_lock:
             yf_subs.setdefault(sym, 0)
@@ -472,6 +521,8 @@ def on_unsub_yf(data):
     sym = data.get("symbol","").upper()
     if ds.ACTIVE_FOREX_SOURCE == "oanda":
         oanda_stream.unsubscribe(sym)
+    elif ds.ACTIVE_FOREX_SOURCE == "mt5":
+        with mt5_lock: mt5_subs.pop(sym, None)
     else:
         with yf_lock: yf_subs.pop(sym, None)
 
