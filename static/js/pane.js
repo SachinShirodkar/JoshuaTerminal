@@ -165,7 +165,6 @@ class ChartPane {
     this.container.innerHTML = `
       <div class="pane-toolbar">
         <select class="pane-source-select">
-          <option value="mt5"         ${this.source==='mt5'         ? 'selected':''}>MetaTrader 5</option>
           <option value="oanda"       ${this.source==='oanda'       ? 'selected':''}>OANDA</option>
           <option value="yfinance"    ${this.source==='yfinance'    ? 'selected':''}>Yahoo Finance</option>
           <option value="hyperliquid" ${this.source==='hyperliquid' ? 'selected':''}>Hyperliquid (Crypto)</option>
@@ -616,14 +615,14 @@ class ChartPane {
 
   _subscribeYF() {
     if (this.source !== 'hyperliquid') {
-      this.socket.emit('subscribe_yf', { symbol: this.symbol });
+      this.socket.emit('subscribe_yf', { symbol: this.symbol, source: this.source });
     }
     // Hyperliquid: allMids covers all symbols automatically
   }
 
   _unsubscribeYF() {
     if (this.source !== 'hyperliquid') {
-      this.socket.emit('unsubscribe_yf', { symbol: this.symbol });
+      this.socket.emit('unsubscribe_yf', { symbol: this.symbol, source: this.source });
     }
   }
 
