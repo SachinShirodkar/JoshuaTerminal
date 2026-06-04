@@ -2,9 +2,18 @@
 data_source.py — Pluggable data source layer
 =============================================
 Active sources:
+  - "mt5"        : MetaTrader 5 via local mt5_bridge.py (highest priority)
   - "oanda"      : Forex, metals, indices via OANDA v20 REST + streaming
   - "yfinance"   : Fallback, no key needed but forex unreliable
   - "hyperliquid": Handled directly in app.py via REST+WS
+
+To use MT5 as your price source:
+  1. Run mt5_bridge.py on the Windows machine where MT5 is installed.
+  2. Find the machine's LAN IP with: ipconfig
+  3. Set in .env:
+       MT5_ENABLED=true
+       MT5_BRIDGE_HOST=192.168.1.50   # or localhost if same machine
+       MT5_BRIDGE_PORT=5006
 
 To get an OANDA API key:
   1. Open a free practice account at https://www.oanda.com/
@@ -44,8 +53,23 @@ _OANDA_BASE = (
     "https://api-fxpractice.oanda.com"     # practice account
 )
 
-# ── Active source selection ──────────────────────────────────────────────────
-ACTIVE_FOREX_SOURCE = "oanda" if OANDA_API_KEY else "yfinance"
+# ── MT5 bridge connection ─────────────────────────────────────────────────────
+# mt5_bridge.py must be running on the Windows machine that has MT5 installed.
+# Set MT5_ENABLED=true in .env to activate. Bridge can run on the same machine
+# (localhost) or anywhere on the LAN.
+MT5_ENABLED     = os.environ.get("MT5_ENABLED",     "false").lower() == "true"
+MT5_BRIDGE_HOST = os.environ.get("MT5_BRIDGE_HOST", "localhost")
+MT5_BRIDGE_PORT = int(os.environ.get("MT5_BRIDGE_PORT", 5006))
+_MT5_BASE       = f"http://{MT5_BRIDGE_HOST}:{MT5_BRIDGE_PORT}"
+
+# ── Active source selection ───────────────────────────────────────────────────
+# Priority: mt5 (if enabled) → oanda (if key present) → yfinance (fallback)
+if MT5_ENABLED:
+    ACTIVE_FOREX_SOURCE = "mt5"
+elif OANDA_API_KEY:
+    ACTIVE_FOREX_SOURCE = "oanda"
+else:
+    ACTIVE_FOREX_SOURCE = "yfinance"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -347,16 +371,100 @@ def yfinance_get_price(symbol: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MT5 Bridge  (read-only HTTP calls to mt5_bridge.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def mt5_get_price(symbol: str) -> dict:
+    """
+    Fetch latest bid/ask/mid from the MT5 bridge.
+    Bridge endpoint: GET /price?symbol=EURUSD
+    Falls back to OANDA → yfinance if the bridge is unreachable.
+    """
+    import requests as _requests
+
+    # Normalize to bare symbol — bridge handles EUR/USD, EURUSD, XAU/USD etc.
+    sym = symbol.upper().replace("/", "").replace("-", "").replace("_", "").replace("=X", "")
+
+    try:
+        r = _requests.get(f"{_MT5_BASE}/price", params={"symbol": sym}, timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("ok"):
+                return {
+                    "symbol":     symbol,
+                    "price":      data["mid"],
+                    "change":     0,
+                    "change_pct": 0,
+                }
+        logger.warning(f"MT5 bridge /price returned {r.status_code} for {sym} — falling back")
+    except Exception as e:
+        logger.warning(f"MT5 bridge unreachable for price ({sym}): {e} — falling back")
+
+    # Fallback chain
+    if OANDA_API_KEY:
+        return oanda_get_price(symbol)
+    return yfinance_get_price(symbol)
+
+
+def mt5_get_candles(symbol: str, interval: str = "15m", limit: int = 300) -> list:
+    """
+    Fetch OHLCV candle history from the MT5 bridge.
+    Bridge endpoint: GET /candles?symbol=EURUSD&interval=1h&limit=300
+    Returns candles in chronological order (oldest first) — Lightweight Charts format.
+    Falls back to OANDA → yfinance if the bridge is unreachable.
+    """
+    import requests as _requests
+
+    sym = symbol.upper().replace("/", "").replace("-", "").replace("_", "").replace("=X", "")
+
+    try:
+        r = _requests.get(
+            f"{_MT5_BASE}/candles",
+            params={"symbol": sym, "interval": interval, "limit": limit},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("ok") and data.get("candles"):
+                return data["candles"]
+        logger.warning(f"MT5 bridge /candles returned {r.status_code} for {sym} {interval} — falling back")
+    except Exception as e:
+        logger.warning(f"MT5 bridge unreachable for candles ({sym} {interval}): {e} — falling back")
+
+    # Fallback chain
+    if OANDA_API_KEY:
+        return oanda_get_candles(symbol, interval, limit)
+    return yfinance_get_candles(symbol, interval, limit)
+
+
+def mt5_is_connected() -> bool:
+    """
+    Quick connectivity check against the MT5 bridge /health endpoint.
+    Used by app.py to populate the MT5 status dot in the topbar.
+    """
+    import requests as _requests
+    try:
+        r = _requests.get(f"{_MT5_BASE}/health", timeout=2)
+        return r.status_code == 200 and r.json().get("ok", False)
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public interface (called by app.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_candles(symbol: str, interval: str = "15m", limit: int = 300) -> list:
+    if ACTIVE_FOREX_SOURCE == "mt5":
+        return mt5_get_candles(symbol, interval, limit)
     if ACTIVE_FOREX_SOURCE == "oanda":
         return oanda_get_candles(symbol, interval, limit)
     return yfinance_get_candles(symbol, interval, limit)
 
 
 def get_price(symbol: str) -> dict:
+    if ACTIVE_FOREX_SOURCE == "mt5":
+        return mt5_get_price(symbol)
     if ACTIVE_FOREX_SOURCE == "oanda":
         return oanda_get_price(symbol)
     return yfinance_get_price(symbol)
