@@ -165,6 +165,7 @@ class ChartPane {
     this.container.innerHTML = `
       <div class="pane-toolbar">
         <select class="pane-source-select">
+          <option value="mt5"         ${this.source==='mt5'         ? 'selected':''}>MetaTrader 5</option>
           <option value="oanda"       ${this.source==='oanda'       ? 'selected':''}>OANDA</option>
           <option value="yfinance"    ${this.source==='yfinance'    ? 'selected':''}>Yahoo Finance</option>
           <option value="hyperliquid" ${this.source==='hyperliquid' ? 'selected':''}>Hyperliquid (Crypto)</option>

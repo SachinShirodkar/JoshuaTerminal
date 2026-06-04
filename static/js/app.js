@@ -25,9 +25,20 @@ const App = (() => {
     symbolLists = fxSyms;
     window._hlSymbols = hlSyms;
 
-    // Show key warning banner if no TwelveData key
-    if (!cfg.has_oanda_key) {
+    // Show OANDA key warning only when MT5 is not the active source
+    if (!cfg.has_oanda_key && cfg.active_source !== 'mt5') {
       showKeyBanner();
+    }
+
+    // MT5 status dot — poll /api/mt5/status every 10 s when MT5 is enabled
+    if (cfg.mt5_enabled) {
+      const updateMt5Dot = () => {
+        fetch('/api/mt5/status').then(r => r.json()).then(d => {
+          setDot('dot-mt5', d.ok ? 'live' : 'error');
+        }).catch(() => setDot('dot-mt5', 'error'));
+      };
+      updateMt5Dot();
+      setInterval(updateMt5Dot, 10000);
     }
 
     initSocket();
@@ -64,6 +75,7 @@ const App = (() => {
       console.log('Socket connected');
       setDot('dot-hl', 'live');
       setDot('dot-yf', 'live');
+      // MT5 dot is driven by polling /api/mt5/status, not the socket connection
     });
     socket.on('disconnect', () => {
       setDot('dot-hl', '');
@@ -81,11 +93,21 @@ const App = (() => {
       });
     });
 
+    // MT5 bridge polling ticks
+    socket.on('mt5_price', data => {
+      const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+      panes.forEach(p => {
+        if (p.source === 'mt5' && norm(p.symbol) === norm(data.symbol)) {
+          p.onPriceUpdate(data);
+        }
+      });
+    });
+
     // OANDA streaming ticks (real-time bid/ask midpoint)
     socket.on('oanda_price', data => {
       const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
       panes.forEach(p => {
-        if (p.source !== 'hyperliquid' && norm(p.symbol) === norm(data.symbol)) {
+        if (p.source !== 'hyperliquid' && p.source !== 'mt5' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
         }
       });
@@ -95,7 +117,7 @@ const App = (() => {
     socket.on('yf_price', data => {
       const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
       panes.forEach(p => {
-        if (p.source !== 'hyperliquid' && norm(p.symbol) === norm(data.symbol)) {
+        if (p.source !== 'hyperliquid' && p.source !== 'mt5' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
         }
       });
