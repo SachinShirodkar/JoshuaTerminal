@@ -9,8 +9,10 @@ Includes an integrated AI analysis pipeline that captures your charts (with all 
 ## Features
 
 - **Multi-chart grid** — 1, 2, 4, 6, or 8 panes, each fully independent
-- **Live prices** — OANDA v20 real-time streaming (forex), Hyperliquid WebSocket (crypto), yfinance fallback
-- **28+ technical indicators** — MAs, Bollinger, Keltner, Donchian, Ichimoku, Parabolic SAR, RSI, RSI Divergence, MACD, Stoch RSI, CMF, Momentum, S/D Zones & Auto Fib, Order Blocks, and more
+- **Live prices** — MetaTrader 5 bridge (primary), OANDA v20 real-time streaming, yfinance fallback; Hyperliquid WebSocket (crypto); all sources independently stable
+- **Global source selector** — one SOURCE dropdown in the topbar switches all forex panes simultaneously; crypto (Hyperliquid) panes are unaffected; persists across sessions
+- **Smart symbol routing** — type any symbol and the pane auto-detects the correct source; crypto symbols route to Hyperliquid, forex symbols route to your global source
+- **28+ technical indicators** — MAs, Bollinger, Keltner, Donchian, Ichimoku, Parabolic SAR, RSI, RSI Divergence, MACD, Stoch RSI, CMF, Momentum, S/D Zones & Auto Fib, Order Blocks, FVG, and more
 - **Drawing tools** — Fibonacci, Trendlines, Horizontal/Vertical lines, Long/Short position blocks with risk calculator
 - **Candle style** — fully configurable candle colours (bull/bear fill, border, wick); transparent/hollow candle mode
 - **Lock drawings** — trendlines, horizontal lines, vertical lines, and position blocks can be locked to prevent accidental moves
@@ -201,7 +203,10 @@ See `SETUP.md` Section 8 for full details including virtualenv usage and SSL cer
 - **Save your drawings** with the SAVE button — amber dot means unsaved changes. Saving also syncs drawings to the server so they appear in AI analysis snapshots
 - **Drawings follow the symbol**, not the timeframe — your EURUSD lines appear on every interval
 - **Indicators are per timeframe** — RSI on 15m is saved separately from RSI on 1h
+- **Switching data source** — use the SOURCE dropdown in the topbar; all forex charts reload simultaneously
+- **Crypto vs forex** — type any HL symbol (BTC, ETH, SOL…) into any pane and it auto-routes to Hyperliquid; type a forex pair and it auto-routes to your global source
 - **Full cache clear** if changes do not appear — `Cmd+Shift+R` / `Ctrl+Shift+R`
+- **Clear saved layout** if panes load with wrong settings — run `localStorage.removeItem('paneLayout_4')` in the console and refresh
 - **Debug endpoint** — `http://localhost:5050/debug` shows data source health
 - **Snapshot list** — `https://localhost:5050/api/snapshot/list` shows all captured PNGs
 
