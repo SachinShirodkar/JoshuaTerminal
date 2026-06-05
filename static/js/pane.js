@@ -75,6 +75,10 @@ class ChartPane {
     this.currentPrice     = null;
     this._ro              = null;
 
+    // ── Bar advance tracking (timezone-safe) ─────────────
+    this._candlesLoadedAt   = null;  // Date.now() when candles were last rendered
+    this._lastBarTimeAtLoad = 0;     // last candle's .time when loaded (broker-time domain)
+
     // ── Drawing tools state ──────────────────────────────
     this.drawingMode      = null;   // 'fib' | null
     this._fibDrawing      = null;   // { startPrice, startTime, series[] } during drag
@@ -536,6 +540,11 @@ class ChartPane {
     }
 
     if (last) this._updateTicker(last.close, last.close, 0, 0, 'up');
+    // Record real wall-clock time when this set of candles was loaded.
+    // onPriceUpdate() uses elapsed wall-clock time for bar-advance detection
+    // so the logic is timezone-agnostic (MT5 bridge returns broker-time, not UTC).
+    this._candlesLoadedAt   = Date.now();
+    this._lastBarTimeAtLoad = last ? last.time : 0;
     this._startCandleCountdown();
   }
 
@@ -666,19 +675,37 @@ class ChartPane {
     }
 
     if (this.candles.length > 0) {
-      const intervalMs = this._intervalToMs(this.interval);
-      const nowSec     = Math.floor(Date.now() / 1000);
-      const last       = this.candles[this.candles.length - 1];
-      const barEndSec  = last.time + Math.floor(intervalMs / 1000);
+      const intervalMs  = this._intervalToMs(this.interval);
+      const barDurSec   = Math.floor(intervalMs / 1000);
 
-      if (intervalMs > 0 && nowSec >= barEndSec) {
-        // Advance to the next bar boundary (handles gaps if multiple bars missed)
-        const barDurSec   = Math.floor(intervalMs / 1000);
-        const barsElapsed = Math.floor((nowSec - last.time) / barDurSec);
-        const newBarTime  = last.time + barsElapsed * barDurSec;
-        const newBar = { time: newBarTime, open: price, high: price, low: price, close: price };
-        this.candles.push(newBar);
-        try { this.candleSeries.update(newBar); } catch(e) {}
+      // ── Timezone-safe bar advance ────────────────────────────────────────────
+      // MT5 bridge returns candles in broker server time (often UTC+2/UTC+3).
+      // Comparing last.time directly against Date.now()/1000 (UTC) would give a
+      // false "bar not ended" result for hours, causing all ticks to update the
+      // same candle forever.  Instead we measure *elapsed wall-clock seconds*
+      // since _renderCandles() loaded this batch — completely timezone-agnostic.
+      const elapsedSec  = (Date.now() - (this._candlesLoadedAt || Date.now())) / 1000;
+      const barsElapsed = intervalMs > 0 ? Math.floor(elapsedSec / barDurSec) : 0;
+      const last        = this.candles[this.candles.length - 1];
+
+      if (intervalMs > 0 && barsElapsed > 0) {
+        // One or more new bars have elapsed since we loaded candles.
+        // Advance the series using broker-time arithmetic so LWC timestamps
+        // remain monotonically increasing within their own time domain.
+        const newBarTime = (this._lastBarTimeAtLoad || last.time) + barsElapsed * barDurSec;
+        // Only push if truly a new bar (guard against duplicate timestamps)
+        if (newBarTime > last.time) {
+          const newBar = { time: newBarTime, open: price, high: price, low: price, close: price };
+          this.candles.push(newBar);
+          try { this.candleSeries.update(newBar); } catch(e) {}
+        } else {
+          // barsElapsed advanced but newBarTime isn't newer — just update last
+          const updated = { ...last, close: price,
+            high: Math.max(last.high, price),
+            low:  Math.min(last.low,  price) };
+          this.candles[this.candles.length - 1] = updated;
+          try { this.candleSeries.update(updated); } catch(e) {}
+        }
       } else {
         const updated = { ...last, close: price,
           high: Math.max(last.high, price),
@@ -709,15 +736,18 @@ class ChartPane {
       const intervalMs = this._intervalToMs(this.interval);
       if (!intervalMs || !this.candles.length) { el.textContent = ''; return; }
 
-      const last      = this.candles[this.candles.length - 1];
-      const barDurSec = intervalMs / 1000;
-      const barEndSec = last.time + barDurSec;
-      const nowSec    = Date.now() / 1000;
-      let   remSec    = Math.max(0, barEndSec - nowSec);
+      // ── Timezone-safe remaining time ─────────────────────────────────────────
+      // Use elapsed wall-clock time since candles were loaded, not candle.time vs
+      // Date.now(), so broker-time (UTC+2/+3) timestamps don't corrupt the display.
+      const barDurSec  = intervalMs / 1000;
+      const elapsedSec = (Date.now() - (this._candlesLoadedAt || Date.now())) / 1000;
+      const barsFull   = Math.floor(elapsedSec / barDurSec);
+      const secIntoBar = elapsedSec - barsFull * barDurSec;
+      let   remSec     = Math.max(0, barDurSec - secIntoBar);
 
       el.textContent = '⏱ ' + this._formatCountdown(remSec, intervalMs);
 
-      // Pulse red when under 10% of candle duration remaining
+      // Pulse amber when under 10% of candle duration remaining
       const threshold = barDurSec * 0.10;
       el.classList.toggle('countdown-urgent', remSec > 0 && remSec <= threshold);
     };
