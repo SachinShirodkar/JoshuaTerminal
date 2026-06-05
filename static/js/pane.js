@@ -374,12 +374,14 @@ class ChartPane {
     this._closeDropdown();
     const dd = document.createElement('div');
     dd.className = 'symbol-dropdown';
-    const lists = this.source === 'hyperliquid'
-      ? { "Crypto Perps": window._hlSymbols || [] }
-      : (this.symbolLists || {});
-    // symbolLists already has Majors/Minors/Exotics groups from /api/symbols/forex
 
-    for (const [group, symbols] of Object.entries(lists)) {
+    // Always show both forex and crypto — symbol selection drives source switching
+    const allLists = {
+      ...(this.symbolLists || {}),
+      'Crypto Perps': window._hlSymbols || [],
+    };
+
+    for (const [group, symbols] of Object.entries(allLists)) {
       const g = document.createElement('div');
       g.className = 'symbol-dropdown-group';
       g.textContent = group;
@@ -431,6 +433,17 @@ class ChartPane {
     const saveBtn = this.container.querySelector('.btn-save-state');
     if (saveBtn) saveBtn.title = `Save chart state for ${this.symbol}`;
     this._closeDropdown();
+
+    // ── Auto-detect source from symbol ───────────────────────────────────────
+    // If the symbol exists in the HL crypto list → hyperliquid.
+    // Otherwise → whatever the global forex source is.
+    const hlSyms = window._hlSymbols || [];
+    const isHL   = hlSyms.includes(this.symbol) || hlSyms.includes(sym);
+    const globalSrc = (typeof window._getGlobalSource === 'function')
+      ? window._getGlobalSource()
+      : (localStorage.getItem('globalSource') || 'oanda');
+    this.source = isHL ? 'hyperliquid' : globalSrc;
+
     this._loadData();
   }
 
