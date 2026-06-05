@@ -451,6 +451,9 @@ class ChartPane {
       setTimeout(() => this._loadData(), 100);
       return;
     }
+    // Clear candles immediately so onPriceUpdate() does not mutate stale bars
+    // during the async fetch (source/interval switch race condition).
+    this.candles = [];
     this._showLoading(true);
     try {
       const url = `/api/candles?symbol=${encodeURIComponent(this.symbol)}&interval=${encodeURIComponent(this.interval)}&source=${this.source}&limit=400`;

@@ -108,6 +108,8 @@
     </div>
     <div class="popout-controls">
       <div class="connection-status" style="gap:5px">
+        <span class="dot" id="pop-dot-mt5" title="MetaTrader 5" style="display:none"></span>
+        <span class="conn-label" id="pop-label-mt5" style="display:none">MT5</span>
         <span class="dot" id="pop-dot-hl" title="Hyperliquid"></span>
         <span class="conn-label">HL</span>
         <span class="dot" id="pop-dot-yf" title="YFinance"></span>
@@ -218,7 +220,25 @@
     setDot('pop-dot-hl', '');
     setDot('pop-dot-yf', '');
     setDot('pop-dot-oanda', '');
+    setDot('pop-dot-mt5', 'error');
   });
+
+  // ── MT5 status dot — show only when MT5 is enabled ──────────────────────────
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (cfg.mt5_enabled) {
+      document.getElementById('pop-dot-mt5').style.display   = '';
+      document.getElementById('pop-label-mt5').style.display = '';
+      const updateMt5Dot = () => {
+        fetch('/api/mt5/status').then(r => r.json()).then(d => {
+          setDot('pop-dot-mt5', d.ok ? 'live' : 'error');
+        }).catch(() => setDot('pop-dot-mt5', 'error'));
+      };
+      updateMt5Dot();
+      setInterval(updateMt5Dot, 10000);
+    }
+    // OANDA dot: only show live when key is present
+    if (cfg.has_oanda_key) setDot('pop-dot-oanda', 'live');
+  }).catch(() => {});
 
   // ── Live price routing → pane.onPriceUpdate() ──────────────────────────────
   // (mirrors app.js socket handlers — popout doesn't load app.js)
@@ -232,15 +252,24 @@
     }
   });
 
-  socket.on('oanda_price', data => {
-    setDot('pop-dot-oanda', 'live');
-    if (pane && pane.source !== 'hyperliquid' && _norm(pane.symbol) === _norm(data.symbol)) {
+  // MT5 bridge polling ticks — strict source guard
+  socket.on('mt5_price', data => {
+    if (pane && pane.source === 'mt5' && _norm(pane.symbol) === _norm(data.symbol)) {
       pane.onPriceUpdate(data);
     }
   });
 
+  // OANDA streaming ticks — strict source guard
+  socket.on('oanda_price', data => {
+    setDot('pop-dot-oanda', 'live');
+    if (pane && pane.source === 'oanda' && _norm(pane.symbol) === _norm(data.symbol)) {
+      pane.onPriceUpdate(data);
+    }
+  });
+
+  // YF polling fallback — strict source guard
   socket.on('yf_price', data => {
-    if (pane && pane.source !== 'hyperliquid' && _norm(pane.symbol) === _norm(data.symbol)) {
+    if (pane && pane.source === 'yfinance' && _norm(pane.symbol) === _norm(data.symbol)) {
       pane.onPriceUpdate(data);
     }
   });
