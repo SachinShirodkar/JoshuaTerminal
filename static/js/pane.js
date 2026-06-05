@@ -168,12 +168,6 @@ class ChartPane {
   _buildHTML() {
     this.container.innerHTML = `
       <div class="pane-toolbar">
-        <select class="pane-source-select">
-          <option value="mt5"         ${this.source==='mt5'         ? 'selected':''}>MetaTrader 5</option>
-          <option value="oanda"       ${this.source==='oanda'       ? 'selected':''}>OANDA</option>
-          <option value="yfinance"    ${this.source==='yfinance'    ? 'selected':''}>Yahoo Finance</option>
-          <option value="hyperliquid" ${this.source==='hyperliquid' ? 'selected':''}>Hyperliquid (Crypto)</option>
-        </select>
         <div class="symbol-wrap" style="position:relative">
           <input class="pane-symbol-input" type="text"
                  value="${this.symbol}" spellcheck="false" autocomplete="off" />
@@ -307,15 +301,8 @@ class ChartPane {
   // ── Events ──────────────────────────────────────────
 
   _attachEvents() {
-    const sourceEl   = this.container.querySelector('.pane-source-select');
     const symbolEl   = this.container.querySelector('.pane-symbol-input');
     const intervalEl = this.container.querySelector('.pane-interval-select');
-
-    sourceEl.addEventListener('change', () => {
-      this._unsubscribeYF();
-      this.source = sourceEl.value;
-      this._loadData();
-    });
 
     intervalEl.addEventListener('change', () => {
       this.interval = intervalEl.value;
@@ -3869,6 +3856,14 @@ class ChartPane {
       a.href = url; a.download = filename; a.click();
       URL.revokeObjectURL(url);
     }, 'image/png');
+  }
+
+  // ── setSource — called by App when global source changes ─────────────────────
+  setSource(src) {
+    if (this.source === src) return;   // no-op if unchanged
+    this._unsubscribeYF();
+    this.source = src;
+    this._loadData();
   }
 
   // ── applyTheme ────────────────────────────────────────────────────────────────

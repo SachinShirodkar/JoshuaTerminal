@@ -162,7 +162,8 @@
   const params   = new URLSearchParams(location.search);
   const symbol   = params.get('symbol')   || 'EUR/USD';
   const interval = params.get('interval') || '15m';
-  const source   = params.get('source')   || 'oanda';
+  // Source is global — read from localStorage (set by main window), not URL param
+  const source   = localStorage.getItem('globalSource') || params.get('source') || 'oanda';
 
   document.title = `${symbol} · Joshua Terminal`;
 
