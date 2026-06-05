@@ -422,7 +422,14 @@ def api_candles():
 
     if source == "hyperliquid":
         candles = hl_get_candles(symbol, interval, limit)
+    elif source == "mt5":
+        candles = ds.mt5_get_candles(symbol, interval, limit)
+    elif source == "oanda":
+        candles = ds.oanda_get_candles(symbol, interval, limit)
+    elif source == "yfinance":
+        candles = ds.yfinance_get_candles(symbol, interval, limit)
     else:
+        # Unknown source — fall back to global active source
         candles = ds.get_candles(symbol, interval, limit)
 
     return jsonify({"symbol":symbol,"interval":interval,
