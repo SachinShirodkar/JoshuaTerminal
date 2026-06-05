@@ -8,6 +8,7 @@ const App = (() => {
   let chartCount  = 4;
   let symbolLists = {};
   let appConfig   = {};
+  let globalSource = 'oanda';   // single forex data source for all panes
 
   // ── Init ────────────────────────────────────────────
 
@@ -25,8 +26,12 @@ const App = (() => {
     symbolLists = fxSyms;
     window._hlSymbols = hlSyms;
 
+    // ── Global source: restore from localStorage, fall back to server default
+    globalSource = localStorage.getItem('globalSource') || cfg.active_source || 'oanda';
+    _initGlobalSourceSelector(cfg);
+
     // Show OANDA key warning only when MT5 is not the active source
-    if (!cfg.has_oanda_key && cfg.active_source !== 'mt5') {
+    if (!cfg.has_oanda_key && globalSource !== 'mt5' && globalSource !== 'yfinance') {
       showKeyBanner();
     }
 
@@ -53,6 +58,41 @@ const App = (() => {
     updateSession();
     setInterval(updateSession, 30000);
   }
+
+  // ── Global source selector ───────────────────────────
+  function _initGlobalSourceSelector(cfg) {
+    const sel = document.getElementById('global-source-select');
+    if (!sel) return;
+
+    // Hide MT5 option if bridge not enabled
+    sel.querySelector('option[value="mt5"]').hidden = !cfg.mt5_enabled;
+    // Hide OANDA option if no key
+    sel.querySelector('option[value="oanda"]').hidden = !cfg.has_oanda_key;
+
+    sel.value = globalSource;
+
+    sel.addEventListener('change', () => {
+      applyGlobalSource(sel.value);
+    });
+  }
+
+  function applyGlobalSource(src) {
+    globalSource = src;
+    localStorage.setItem('globalSource', src);
+
+    const sel = document.getElementById('global-source-select');
+    if (sel) sel.value = src;
+
+    // Reload all forex panes with new source; leave hyperliquid panes untouched
+    panes.forEach(p => {
+      if (p.source !== 'hyperliquid') {
+        p.setSource(src);
+      }
+    });
+  }
+
+  // Expose so popout can read it
+  window._getGlobalSource = () => globalSource;
 
   function showKeyBanner() {
     const banner = document.createElement('div');
@@ -84,7 +124,9 @@ const App = (() => {
       setDot('dot-oanda', '');
     });
 
-    // Hyperliquid: batch allMids
+    const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+
+    // Hyperliquid: always routed to hyperliquid panes regardless of globalSource
     socket.on('hl_mids', data => {
       const map = {};
       (data.updates || []).forEach(t => { map[t.symbol] = t; });
@@ -95,9 +137,9 @@ const App = (() => {
       });
     });
 
-    // MT5 bridge polling ticks
+    // MT5 ticks → all forex panes when globalSource is mt5
     socket.on('mt5_price', data => {
-      const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+      if (globalSource !== 'mt5') return;
       panes.forEach(p => {
         if (p.source === 'mt5' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
@@ -105,9 +147,10 @@ const App = (() => {
       });
     });
 
-    // OANDA streaming ticks (real-time bid/ask midpoint)
+    // OANDA ticks → all forex panes when globalSource is oanda
     socket.on('oanda_price', data => {
-      const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+      setDot('dot-oanda', 'live');
+      if (globalSource !== 'oanda') return;
       panes.forEach(p => {
         if (p.source === 'oanda' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
@@ -115,9 +158,9 @@ const App = (() => {
       });
     });
 
-    // YF polling fallback (used when no OANDA key)
+    // YF ticks → all forex panes when globalSource is yfinance
     socket.on('yf_price', data => {
-      const norm = s => s.replace(/[\/_-]/g, '').toUpperCase();
+      if (globalSource !== 'yfinance') return;
       panes.forEach(p => {
         if (p.source === 'yfinance' && norm(p.symbol) === norm(data.symbol)) {
           p.onPriceUpdate(data);
@@ -179,7 +222,9 @@ const App = (() => {
       paneEl.style.animationDelay = `${i * 50}ms`;
       grid.appendChild(paneEl);
       const cfg = defaults[i] || defaults[0];
-      panes.push(new ChartPane(i, paneEl, socket, symbolLists, cfg));
+      // Override forex source with global — only hyperliquid panes keep their own source
+      const paneCfg = { ...cfg, source: cfg.source === 'hyperliquid' ? 'hyperliquid' : globalSource };
+      panes.push(new ChartPane(i, paneEl, socket, symbolLists, paneCfg));
     }
 
     grid.addEventListener('click', e => {
@@ -198,7 +243,12 @@ const App = (() => {
   }
 
   function savePaneLayout() {
-    const layout = panes.map(p => ({ source: p.source, symbol: p.symbol, interval: p.interval }));
+    // Save symbol + interval only — source is global and stored separately
+    const layout = panes.map(p => ({
+      source:   p.source,   // keep so crypto panes (hyperliquid) restore correctly
+      symbol:   p.symbol,
+      interval: p.interval,
+    }));
     localStorage.setItem('paneLayout_' + chartCount, JSON.stringify(layout));
   }
 
